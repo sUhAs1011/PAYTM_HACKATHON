@@ -179,12 +179,19 @@ This specification serves as the immutable data contract and integration standar
 To eliminate Git merge conflicts during the 6.5-hour build, each developer owns an isolated directory subtree. Shared contracts are placed in a common schemas directory that is read-only after Hour 0.5.
 
 ```
-parchapay-ai/
+./                                    # Repository root; all paths below are relative to it
+├── .dockerignore                     # Exclude secrets, dependencies, caches, and generated files from builds
+├── .env.example                      # Placeholder configuration only; never include real credentials
+├── compose.yaml                      # Local application stack (frontend + API)
 ├── contracts/                        # Read-only shared definitions
 │   ├── contracts.ts                  # TypeScript types for Angular (Dev 1)
 │   ├── contracts.py                  # Pydantic models for FastAPI (Dev 2 & 3)
 │   └── demo_bill_fixture.json        # Golden mock payload for mock-first testing
 ├── frontend/                         # DEV 1 TERRITORY (Angular 19)
+│   ├── Dockerfile                    # Multi-stage frontend image
+│   ├── Dockerfile.dockerignore       # Build-context exclusions for the frontend image
+│   ├── proxy.conf.json               # Host-run proxy configuration
+│   ├── proxy.docker.conf.json        # Container-network proxy targets the `api` service
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── routes/
@@ -199,6 +206,8 @@ parchapay-ai/
 │   │   │       ├── websocket.service.ts
 │   │   │       └── api.service.ts
 ├── backend/                          # DEV 2 & DEV 3 TERRITORY (FastAPI)
+│   ├── Dockerfile                    # Multi-stage API image
+│   ├── Dockerfile.dockerignore       # Build-context exclusions for the API image
 │   ├── app/
 │   │   ├── api/                      # DEV 2: REST endpoints & WebSocket broadcaster
 │   │   │   ├── scan_router.py
@@ -625,6 +634,7 @@ To enable Mock-First Development, Dev 2 will configure `/api/parcha/scan` to imm
 6.2 Angular Reverse Proxy Configuration (\`frontend/proxy.conf.json\`)&nbsp;
 
 - To avoid CORS issues and resolve relative URLs (such as \`/static/crops/...\` and \`/static/audio/...\`) identically across both mobile and desktop environments, all backend traffic must be proxied through port \`4200\`.&nbsp;
+- When Angular runs directly on the host, this config targets \`localhost:8000\`. When Angular runs in Docker Compose, use \`frontend/proxy.docker.conf.json\`, which targets the API service by its Compose DNS name (\`api\`). Inside the frontend container, \`localhost\` refers to the frontend container itself.&nbsp;
 
 ```json
 - `/api` requests proxy to `http://localhost:8000`
@@ -639,3 +649,43 @@ To enable Mock-First Development, Dev 2 will configure `/api/parcha/scan` to imm
 &nbsp;
 
 &nbsp;
+
+## 7. Dockerization & Local Runtime
+
+Dockerize the application from the start. The repository-root `compose.yaml` is the standard local entry point and runs each first-party application service separately:
+
+* **`frontend`** builds and runs the Angular 19 app.
+* **`api`** builds and runs the FastAPI backend, including the local `/static` asset server.
+
+Supabase, Gemini, and Sarvam are managed external services, not containers in this Compose stack. The API connects to them using runtime configuration. Do not add a local database or mock provider as a required service.
+
+### 7.1 Build and runtime conventions
+
+* Use multi-stage Dockerfiles, trusted and version-pinned base images, and minimal runtime stages. Run application processes as a non-root user and use exec-form commands so signals and graceful shutdown work correctly.
+* Keep build contexts lean. Use the root `.dockerignore` for root-context builds and Dockerfile-specific ignore files (`frontend/Dockerfile.dockerignore`, `backend/Dockerfile.dockerignore`) for the separate service build contexts. Exclude `.env` files, credentials, `node_modules`, virtual environments, caches, and generated assets; do not copy secrets into an image or pass them through Docker build arguments.
+* Commit `.env.example` with variable names and safe placeholders only. For local development, use an untracked `.env` or Compose secrets; grant credentials only to the backend. For deployment, use the platform's secret manager. Never expose Supabase service-role or Gemini/Sarvam keys to Angular or the browser.
+* Keep containers independently startable and use Compose health checks and healthy dependency conditions where appropriate. The API must retry or fail clearly when external services are temporarily unavailable; Compose cannot health-check the managed Supabase/Gemini/Sarvam services as local containers.
+* Persist generated crops and audio outside the image using a mount for `backend/static/crops/` and `backend/static/audio/`, so rebuilding/replacing the API container does not erase demo assets.
+* Keep development bind mounts and hot reload separate from production runtime behavior. Do not run the app as root or rely on mutable container filesystems for durable data.
+
+### 7.2 Compose networking and CIS compatibility
+
+Expose the Angular dev server on host port `4200` so the phone and projector browser can access it over the LAN. Within Compose, the frontend proxy reaches the API by its service DNS name (`api`), not `localhost`. Use `frontend/proxy.docker.conf.json` for Docker runs:
+
+```text
+/api    -> http://api:8000
+/static -> http://api:8000
+/ws     -> ws://api:8000 (WebSocket upgrade enabled)
+```
+
+Browser requests remain relative and go through port `4200`; public REST paths, the WebSocket path, and event payloads in the CIS do not change. The existing `frontend/proxy.conf.json` localhost target remains for a frontend process run directly on the host. Compose must select the Docker-specific proxy configuration.
+
+### 7.3 Local run and verification
+
+From the repository root, start the application with:
+
+```sh
+docker compose up --build
+```
+
+Verify the frontend is reachable at `http://localhost:4200`, `/scan` and `/counter` load, and requests to `/api`, `/static`, and `/ws` reach the API through the proxy. A phone on the same network should use the host machine's LAN address on port `4200`. Health checks must not require adding or changing a public REST endpoint; use container-level checks or an explicitly approved health contract.
