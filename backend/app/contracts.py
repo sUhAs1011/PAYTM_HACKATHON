@@ -20,6 +20,13 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+class ScanStartedData(BaseModel):
+    session_id: str
+    timestamp: str
+    status: str
+    message: str
+
+
 class AuditedItem(BaseModel):
     item_name: str
     billed_qty: int

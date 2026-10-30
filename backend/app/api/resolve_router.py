@@ -17,9 +17,10 @@ Behavior on a DB-backed invoice:
      documented ASSUMPTION in contracts.ts). WhatsApp dispatch stays a
      seam (log-only; live Business API is a later integration slice).
 
-NOTE for the WebSocket slice (locked decision B2): scan broadcasts
-SCAN_STARTED/AUDIT_COMPLETE, resolve broadcasts PAYOUT_APPROVED;
-/api/demo/load-sample NEVER broadcasts.
+NOTE for the WebSocket slice (user-approved policy): scan uploads broadcast
+SCAN_STARTED/AUDIT_COMPLETE; resolve and /api/demo/load-sample are REST-only.
+Resolve's missing PAYOUT_APPROVED broadcast is an explicit CIS §4 Event 3
+deviation until the frontend is coordinated to avoid duplicate application.
 """
 
 import logging
@@ -111,7 +112,7 @@ async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveAction
         raise _write_failure("gst_ims_records upsert", exc) from exc
 
     try:
-        loan = await repo.insert_loan(
+        await repo.insert_loan(
             client,
             {
                 "invoice_id": invoice_id,
