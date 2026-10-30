@@ -1,0 +1,13 @@
+{
+  "counts": {
+    "merchants": 30,
+    "suppliers": 8,
+    "canonical_skus": 20,
+    "mandi_pulse_observations": 480,
+    "invoices": 150,
+    "invoice_line_items": 502,
+    "gst_ims_records": 150,
+    "split_credit_loans": 56
+  },
+  "synthetic_only": true
+}
