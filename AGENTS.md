@@ -27,7 +27,7 @@ For any API, schema, event, or column work, read the Core Interoperability Speci
 - App code lives at the repo root. Do not create a nested `parchapay-ai/` directory. The engineering document's tree is the module layout, not a parent folder.
 - Runtime is live Supabase Postgres + pgvector, Gemini 2.5 Flash, and Sarvam Bulbul TTS. No SQLite stand-in. Mock fixtures are for isolated UI and pipeline tests, not the final data store.
 - Dockerize from the start: root `compose.yaml` runs separate `frontend` and `api` services; Supabase/Gemini/Sarvam stay managed external services. Use the Docker proxy target `api:8000`, per-build-context ignore files, backend-only runtime secrets, and a volume for generated `/static` crops/audio.
-- Module ownership is not assigned yet. Do not start a module until the user names it and approves a plan.
+- Module 4 is assigned to the current user. Other module ownership remains unassigned; do not start another module until the user names it and approves a plan.
 - No multi-file implementation until a 4-part plan is approved: Scope and Non-Goals, Contract References, Step-by-Step Tasks, Definition of Done.
 - Never put API keys, database URLs, or service-role keys in the repo.
 
@@ -40,10 +40,10 @@ Five modules. Stay inside the assigned boundary.
 | 1 Dual-surface client | Dev 1 | Angular 19 `/scan` and `/counter`, Soundbox twin, drawers |
 | 2 API gateway and realtime | Dev 2 | FastAPI REST, `/ws/counter`, `/static` |
 | 3 Vision and voice | Dev 3 | Gemini extraction, Pillow crop, embeddings, Sarvam TTS |
-| 4 Deterministic audit | Dev 3 | Decimal math, price waterfall, split-credit schedule |
+| 4 Deterministic audit | Current user | Decimal bill validation, supplier/pincode price analysis, weekly split-credit simulation |
 | 5 Persistence | Dev 2 | Supabase schema, seed, Tally XML / Marg CSV export |
 
-Planned root layout, not created yet: `compose.yaml`, `.dockerignore`, `.env.example`, `contracts/`, `frontend/` (with `Dockerfile`, `Dockerfile.dockerignore`, `proxy.conf.json`, and `proxy.docker.conf.json`), `backend/` (with `Dockerfile` and `Dockerfile.dockerignore`), `supabase/migrations/`.
+The root layout is scaffolded: `compose.yaml`, `.dockerignore`, `.env.example`, `contracts/`, `frontend/`, `backend/`, and `supabase/migrations/`. Module 4 packages are under `backend/app/{bill_validation,price_analysis,credit}/`, with pure financial functions under `backend/app/engine/`.
 
 Camera capture is a hidden file input with `capture="environment"` and `accept="image/*"`. Do not use `getUserMedia`. Proxy `/api`, `/static`, and `/ws` through the Angular dev server on port 4200. In Compose, proxy to `http://api:8000` / `ws://api:8000`, not container-local `localhost`.
 
@@ -57,33 +57,38 @@ Do not rename columns, routes, event names, or payload keys. Casing in the spec 
 - `POST /api/demo/load-sample`
 - WebSocket `/ws/counter`: `SCAN_STARTED`, `AUDIT_COMPLETE`, `PAYOUT_APPROVED`
 - Tables: `merchants`, `suppliers`, `canonical_skus`, `invoices`, `invoice_line_items`, `gst_ims_records`, `split_credit_loans`
+- Module 4 also references the existing `transactions` and `merchant_account_ledger` tables shown in the user's Supabase schema. Do not create or alter tables/columns for Module 4 without explicit approval.
 - Cosine SKU search uses `<=>` and HNSW index `idx_canonical_skus_embedding` on `embedding vector(768)`
 
 Gemini extracts numbers and boxes only. All totals, tax, landed cost, and loan math use Python `decimal.Decimal`.
 
 True landed unit cost is `(net line amount + GST) / (billed qty + free qty)`.
 
-Lending cap is 35% of the merchant's 30-day average daily QR volume. Mandi-Pulse runs only when at least 5 distinct stores have that canonical SKU in the pin code over 14 days. OCR confidence below 0.80 is a yellow review, not an auto-approve.
+The CIS resolve-flow lending cap is 35% of the merchant's 30-day average daily QR volume. The additive Module 4 weekly-credit API uses a weekly EMI cap of 35% of average weekly incoming QR earnings. Mandi-Pulse runs only when at least 5 distinct stores have that canonical SKU in the pin code over 14 days. OCR confidence below 0.80 is a yellow review, not an auto-approve.
 
 `APPROVE_SPLIT` is the only resolve action in the spec. It is expected to send the WhatsApp reconciliation preview, set GST IMS to disputed/pending, and create the loan schedule. Do not add a second resolve endpoint unless the user changes the spec.
 
 ## Commands
 
-Scaffold only. Do not run `npm install` or `pip install` unless the user asks.
+Do not run `npm install` or `pip install` unless the user asks.
 
 - DB smoke check passed 2026-10-30: from `backend/`, `python -m app.core.db` loads `.env`, verifies the key type, and prints row counts for all 7 CIS tables (zeros until the seed is applied). Exits non-zero on any failure.
-- `docker compose up --build` is the intended local start command. It will not become healthy until an Angular workspace and `app.main:app` exist. `app.main` is a scaffold assumption, not a CIS path.
-- No lint or test command yet.
+- Module 4 offline tests: from `backend/`, `python -m unittest discover -s tests -v`.
+- API start: from `backend/`, `uvicorn app.main:app --env-file ../.env --host 0.0.0.0 --port 8000`. Routes require root `.env` with Supabase credentials.
+- Logging: `backend/app/core/logging_config.py` configures stdout logs and request IDs; set `LOG_LEVEL=DEBUG` for query row counts. Do not log invoice payloads, transaction amounts, phone/VPA values, or credentials.
+- `docker compose up --build` remains the intended local stack command; frontend route work is still pending.
 
 ## Progress
 
 - 2026-10-30: Supabase client verified end-to-end: `python -m app.core.db` from `backend/` reaches all 7 CIS tables (0 rows each). `sb_secret_` key is valid; SUPABASE_URL `nccjpyidbbfjmflifalp.supabase.co`. DDL in Supabase is confirmed executed (tables resolve; no PGRST205).
 - 2026-10-30: supabase-py upgraded 2.11.0 → 2.33.0 via `pip install --user`. Versions up to ~2.11 abort with `SupabaseException: Invalid API key` because they regex-check the key as a JWT; `sb_secret_` keys have no dots and fail that check before any network call. Do not downgrade.
-- 2026-10-30: Source docs are in `documents/`. `README.md` is a title only. Application modules are empty placeholders, not implementations.
+- 2026-10-30: Source docs are in `documents/`. `README.md` is a title only. Module 4 implementation is documented in `soumya.md`; remaining modules may still be placeholders.
 - 2026-10-30: Supabase org and project exist. The SQL Editor DDL script (seven tables, foreign keys, HNSW index, RLS with no policies) is confirmed applied 2026-10-30 — all 7 tables resolve via the smoke check. Do not re-run DDL or drop tables unless the user asks.
 - 2026-10-30: Demo seed was intentionally not applied. The seed in the engineering document attaches five Fortune Oil rows to one merchant invoice, which does not satisfy Mandi-Pulse.
 - 2026-10-30: ED now specifies a Docker Compose frontend/API stack, external managed integrations, secure runtime secrets, static-asset persistence, and Docker-aware proxy routing.
-- 2026-10-30: Repo scaffold exists: empty ED source files, empty SQL migrations, CIS `contracts/demo_bill_fixture.json`, `frontend/package.json` (Angular 19.2.15), `backend/requirements.txt`, Dockerfiles, ignore files, proxy configs, `compose.yaml`, and `.env.example`. No application logic and no DDL. `.gitkeep` files hold empty directories. `.gitignore` excludes `.env` and dependency folders.
+- 2026-10-30: Repo scaffold includes CIS contracts/fixture, frontend package manifest, backend requirements, Dockerfiles, proxy configs, Compose, and empty migration placeholders. Module 4 adds APIs over existing Supabase tables; no schema migration or seed is part of this module.
+- 2026-10-30: Module 4 uses `invoices` + `invoice_line_items` + `merchants` + `suppliers` for validation and price analysis; `transactions` for incoming QR history; `split_credit_loans` + `merchant_account_ledger` for simulated weekly installments. Weekly terms use existing loan columns (`tenure_days = weeks × 7`) without changing the CIS schema. The live ledger unique constraint `uq_ledger_loan_day` permits one row per loan/local day, so each weekly cycle must write one combined paid/missed/partial event. The simulated-disbursement ledger marker distinguishes these weekly loans from legacy daily CIS loans. Missed-installment ledger events are simulation alerts, not actual autopay withdrawals.
+- 2026-10-30: Module 4 logging uses `logging_config.py` stdout setup and request IDs, with controller/service lifecycle logs and debug-level Supabase row counts. Sensitive invoice, payer, VPA, phone, and credential values are intentionally excluded.
 - 2026-10-30: `backend/app/core/db.py` implemented: shared async Supabase client via `await create_async_client(url, key)`. The factory is a coroutine in supabase-py 2.x — must be awaited. Uses the service_role secret key (bypasses RLS). No db name/password needed; PostgREST over HTTPS. `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are now a real config contract; GEMINI/SARVAM names are still placeholders. `python-dotenv` added to requirements (loaded only in the `__main__` block; importing db.py has no side effects). The check loads the repo-root `.env` by explicit path (`parents[3]` of db.py); never put a `.env` in a subfolder — it would shadow the root one. Missing-env and bad-key paths raise clear errors.
 
 ## Do not silently fix
