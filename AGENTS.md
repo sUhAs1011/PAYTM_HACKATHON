@@ -71,16 +71,20 @@ Lending cap is 35% of the merchant's 30-day average daily QR volume. Mandi-Pulse
 
 Scaffold only. Do not run `npm install` or `pip install` unless the user asks.
 
+- DB smoke check passed 2026-10-30: from `backend/`, `python -m app.core.db` loads `.env`, verifies the key type, and prints row counts for all 7 CIS tables (zeros until the seed is applied). Exits non-zero on any failure.
 - `docker compose up --build` is the intended local start command. It will not become healthy until an Angular workspace and `app.main:app` exist. `app.main` is a scaffold assumption, not a CIS path.
 - No lint or test command yet.
 
 ## Progress
 
+- 2026-10-30: Supabase client verified end-to-end: `python -m app.core.db` from `backend/` reaches all 7 CIS tables (0 rows each). `sb_secret_` key is valid; SUPABASE_URL `nccjpyidbbfjmflifalp.supabase.co`. DDL in Supabase is confirmed executed (tables resolve; no PGRST205).
+- 2026-10-30: supabase-py upgraded 2.11.0 → 2.33.0 via `pip install --user`. Versions up to ~2.11 abort with `SupabaseException: Invalid API key` because they regex-check the key as a JWT; `sb_secret_` keys have no dots and fail that check before any network call. Do not downgrade.
 - 2026-10-30: Source docs are in `documents/`. `README.md` is a title only. Application modules are empty placeholders, not implementations.
-- 2026-10-30: Supabase org and project exist. The user was given a SQL Editor script for the seven tables, foreign keys, and HNSW index, plus a follow-up to enable RLS with no policies. Execution is not confirmed in this repo. Do not re-run DDL or drop tables unless the user asks.
+- 2026-10-30: Supabase org and project exist. The SQL Editor DDL script (seven tables, foreign keys, HNSW index, RLS with no policies) is confirmed applied 2026-10-30 — all 7 tables resolve via the smoke check. Do not re-run DDL or drop tables unless the user asks.
 - 2026-10-30: Demo seed was intentionally not applied. The seed in the engineering document attaches five Fortune Oil rows to one merchant invoice, which does not satisfy Mandi-Pulse.
 - 2026-10-30: ED now specifies a Docker Compose frontend/API stack, external managed integrations, secure runtime secrets, static-asset persistence, and Docker-aware proxy routing.
-- 2026-10-30: Repo scaffold exists: empty ED source files, empty SQL migrations, CIS `contracts/demo_bill_fixture.json`, `frontend/package.json` (Angular 19.2.15), `backend/requirements.txt`, Dockerfiles, ignore files, proxy configs, `compose.yaml`, and `.env.example`. No application logic and no DDL. `.gitkeep` files hold empty directories. `.gitignore` excludes `.env` and dependency folders. Env names in `.env.example` are placeholders, not a config contract.
+- 2026-10-30: Repo scaffold exists: empty ED source files, empty SQL migrations, CIS `contracts/demo_bill_fixture.json`, `frontend/package.json` (Angular 19.2.15), `backend/requirements.txt`, Dockerfiles, ignore files, proxy configs, `compose.yaml`, and `.env.example`. No application logic and no DDL. `.gitkeep` files hold empty directories. `.gitignore` excludes `.env` and dependency folders.
+- 2026-10-30: `backend/app/core/db.py` implemented: shared async Supabase client via `await create_async_client(url, key)`. The factory is a coroutine in supabase-py 2.x — must be awaited. Uses the service_role secret key (bypasses RLS). No db name/password needed; PostgREST over HTTPS. `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are now a real config contract; GEMINI/SARVAM names are still placeholders. `python-dotenv` added to requirements (loaded only in the `__main__` block; importing db.py has no side effects). The check loads the repo-root `.env` by explicit path (`parents[3]` of db.py); never put a `.env` in a subfolder — it would shadow the root one. Missing-env and bad-key paths raise clear errors.
 
 ## Do not silently fix
 
