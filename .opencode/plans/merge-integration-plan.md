@@ -26,7 +26,7 @@
      1. Run `suhas`'s `extract_invoice_from_image()` and `crop_pen_markup()`.
      2. Match `supplier_gstin` / `supplier_name` against `suppliers` (fallback to the seeded Sharmaji supplier) and match each line's `raw_item_name` against `canonical_skus` (`product_name` + `aliases`).
      3. Run `soumya`'s `math_engine.calculate_line` and `waterfall_engine.analyze_price` (fed by `soumya`'s `get_supplier_history` and `get_pincode_peer_rates`) + `credit_engine` 30-day QR velocity cap.
-     4. Persist the new `invoices` row, `invoice_line_items` rows, and `gst_ims_records` (`PENDING`) row into Supabase so that `resolve`, `export`, and all `/api/parcha/{id}/*` & `/api/credit/*` endpoints work on every scanned bill.
+      4. Persist the new `invoices` row, `invoice_line_items` rows, and `gst_ims_records` (`PENDING`) row into Supabase so that `resolve`, `export`, the `/api/parcha/{id}/*` routes, and mounted read-only `/api/credit/*` GETs work on every scanned bill.
 
 3. **[MISMATCH — `billed_total` vs `approved_total` & Weekly vs 7-Day Daily Credit Model]**
    - **CIS §4 & Counter UI contract:** `split_credit_pre_approval` and `POST /api/parcha/{id}/resolve` use a **7-day daily QR sweep** (`tenure_days: 7`) where principal is `approved_total` (after stripping pen-edit/rate overcharges), `daily_velocity_cap` is `0.35 × avg_daily_qr_volume` (from 30-day `transactions` or `merchants.avg_daily_qr_volume`), `max_credit_limit = daily_velocity_cap × 7`, and `daily_deduction_amount = approved_total / 7`.
@@ -93,7 +93,7 @@
 1. **Fast-forward / merge `origin/shreyas` into `main`:**
    - Brings in the clean Module 2/5 gateway, `ws_manager.py`, `repo.py`, `exporters.py`, `demo_router.py`, and `shreyas.md`.
 2. **Merge `origin/soumya` into `main`:**
-   - Resolve `backend/app/main.py`, `backend/app/core/db.py`, and `AGENTS.md` conflicts by combining `shreyas`'s 9-table smoke check + `reset_client()` with `soumya`'s logger statements, and mounting `soumya`'s `RequestLoggingMiddleware` and `bill_validation`, `price_analysis`, and `credit` routers in `main.py`.
+    - Resolve `backend/app/main.py`, `backend/app/core/db.py`, and `AGENTS.md` conflicts by combining `shreyas`'s 9-table smoke check + `reset_client()` with `soumya`'s logger statements, and mounting `soumya`'s `RequestLoggingMiddleware`, `bill_validation`, `price_analysis`, and read-only `credit` router in `main.py`.
 3. **Merge `origin/suhas` into `main`:**
    - Keep `suhas`'s `gemini_vision.py`, `pillow_cropper.py`, `suhas.md`, sample crop JPEGs, and frontend `/counter` upload button (`counter.component.ts`, `api.service.ts`).
    - Unify `contracts/contracts.py` and `backend/app/contracts.py` so both CIS §3 (`BoundingBox2D`, `ExtractedLineItem`, `RawExtractedInvoice`) and CIS §4 models are exported cleanly.

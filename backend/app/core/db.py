@@ -12,11 +12,13 @@ Environment variables (see .env.example):
 """
 
 import asyncio
+import logging
 import os
 from typing import Optional
 
 from supabase import AsyncClient, create_async_client
 
+logger = logging.getLogger(__name__)
 _client: Optional[AsyncClient] = None
 _init_lock = asyncio.Lock()
 
@@ -27,7 +29,16 @@ async def get_client() -> AsyncClient:
     if _client is None:
         async with _init_lock:
             if _client is None:
-                _client = await _create_client()
+                logger.info("supabase_client_initialization_started")
+                try:
+                    _client = await _create_client()
+                except Exception as exc:
+                    logger.error(
+                        "supabase_client_initialization_failed error_type=%s",
+                        type(exc).__name__,
+                    )
+                    raise
+                logger.info("supabase_client_initialized")
     return _client
 
 
@@ -54,6 +65,7 @@ async def _create_client() -> AsyncClient:
         if not value
     ]
     if missing:
+        logger.error("supabase_configuration_missing variables=%s", ",".join(missing))
         raise RuntimeError(
             "Missing environment variable(s): "
             + ", ".join(missing)
