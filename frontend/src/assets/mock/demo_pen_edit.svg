@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 320" role="img" aria-label="Cropped bill region showing a pen-corrected quantity">
+  <!-- Paper -->
+  <rect x="0" y="0" width="560" height="320" fill="#f4f1e8"/>
+  <rect x="0" y="0" width="560" height="320" fill="#e9e4d6" opacity="0.35"/>
+
+  <!-- Thermal print header -->
+  <text x="40" y="46" font-family="Consolas, 'Courier New', monospace" font-size="15" fill="#6b675c" letter-spacing="2">SHARMAJI WHOLESALE DISTRIBUTORS</text>
+  <text x="40" y="68" font-family="Consolas, 'Courier New', monospace" font-size="13" fill="#8a8578">INV #INV-2026-402   30-10-2026</text>
+  <line x1="40" y1="84" x2="520" y2="84" stroke="#c9c4b4" stroke-width="2" stroke-dasharray="6 4"/>
+
+  <!-- Table header -->
+  <text x="40" y="112" font-family="Consolas, 'Courier New', monospace" font-size="12" fill="#a29d8e" letter-spacing="1">ITEM                 QTY      RATE      AMOUNT</text>
+
+  <!-- The pen-edited line item -->
+  <text x="40" y="150" font-family="Consolas, 'Courier New', monospace" font-size="16" font-weight="bold" fill="#3a372f">FORTUNE SUN 1L PO</text>
+
+  <!-- Printed qty 12, struck through in ballpoint -->
+  <text x="252" y="150" font-family="Consolas, 'Courier New', monospace" font-size="16" font-weight="bold" fill="#3a372f">12</text>
+  <line x1="246" y1="145" x2="274" y2="152" stroke="#1d4ed8" stroke-width="3" stroke-linecap="round"/>
+  <!-- Handwritten corrected qty 10 -->
+  <text x="284" y="153" font-family="'Segoe Script', 'Comic Sans MS', cursive" font-size="22" fill="#1d4ed8" transform="rotate(-4 284 153)">10</text>
+
+  <text x="330" y="150" font-family="Consolas, 'Courier New', monospace" font-size="16" fill="#3a372f">134.00</text>
+
+  <!-- Printed amount struck, corrected amount handwritten -->
+  <text x="430" y="150" font-family="Consolas, 'Courier New', monospace" font-size="16" fill="#3a372f">1608.00</text>
+  <line x1="424" y1="145" x2="496" y2="152" stroke="#1d4ed8" stroke-width="3" stroke-linecap="round"/>
+  <text x="430" y="185" font-family="'Segoe Script', 'Comic Sans MS', cursive" font-size="24" fill="#1d4ed8" transform="rotate(-3 430 185)">1340.00</text>
+
+  <!-- Next faint row for context -->
+  <text x="40" y="226" font-family="Consolas, 'Courier New', monospace" font-size="14" fill="#b5b0a0">PARLE-G GOLD 24PKT    5+1     240.00    1200.00</text>
+  <line x1="40" y1="240" x2="520" y2="240" stroke="#d8d3c4" stroke-width="1.5"/>
+
+  <!-- Handwritten margin note -->
+  <text x="52" y="284" font-family="'Segoe Script', 'Comic Sans MS', cursive" font-size="19" fill="#1d4ed8" transform="rotate(-2 52 284)">2 short - received 10</text>
+
+  <!-- Detection annotation box -->
+  <rect x="222" y="118" width="110" height="86" fill="none" stroke="#ff5d5d" stroke-width="3" stroke-dasharray="8 6" rx="6"/>
+  <rect x="222" y="98" width="150" height="22" fill="#ff5d5d" rx="6"/>
+  <text x="232" y="113" font-family="Consolas, monospace" font-size="12" font-weight="bold" fill="#fff" letter-spacing="1">PEN EDIT DETECTED</text>
+</svg>
