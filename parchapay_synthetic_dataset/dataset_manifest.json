@@ -7,7 +7,9 @@
     "invoices": 150,
     "invoice_line_items": 502,
     "gst_ims_records": 150,
-    "split_credit_loans": 56
+    "split_credit_loans": 56,
+    "transactions": 7233,
+    "merchant_account_ledger": 175
   },
   "synthetic_only": true
 }

@@ -70,6 +70,12 @@ if __name__ == "__main__":
         "split_credit_loans",
     )
 
+    # User-approved auxiliary tables outside the 7-table CIS (see AGENTS.md).
+    AUX_TABLES = (
+        "transactions",
+        "merchant_account_ledger",
+    )
+
     # Load the repo-root .env explicitly (backend/app/core/db.py -> parents[3]
     # is the repository root), so the check works from any cwd and cannot be
     # shadowed by a stray .env in a subfolder.
@@ -97,19 +103,24 @@ if __name__ == "__main__":
         client = await get_client()
         print("Supabase URL: {}".format(os.environ.get("SUPABASE_URL", "")))
         print("Key type:     {}".format(_describe_key(os.environ.get("SUPABASE_SECRET_KEY", ""))))
-        print("Tables (zeros are expected until the demo seed is applied):")
+        print("Row counts (zeros are expected until the demo seed is applied):")
         failed = False
-        for table in CIS_TABLES:
-            try:
-                response = await client.table(table).select("*", count="exact").execute()
-                print("  {}: {} rows".format(table, response.count))
-            except Exception as exc:  # report every table, then exit non-zero
-                failed = True
-                print("  {}: ERROR {}".format(table, exc))
+        for section_name, tables in (
+            ("CIS tables (Engineering Document contract):", CIS_TABLES),
+            ("Auxiliary tables (user-approved deviations):", AUX_TABLES),
+        ):
+            print(section_name)
+            for table in tables:
+                try:
+                    response = await client.table(table).select("*", count="exact").execute()
+                    print("  {}: {} rows".format(table, response.count))
+                except Exception as exc:  # report every table, then exit non-zero
+                    failed = True
+                    print("  {}: ERROR {}".format(table, exc))
         if failed:
-            print("FAILED: one or more CIS tables could not be read.")
+            print("FAILED: one or more tables could not be read.")
         else:
-            print("OK: all 7 CIS tables reachable.")
+            print("OK: all 7 CIS tables and {} auxiliary tables reachable.".format(len(AUX_TABLES)))
         return 1 if failed else 0
 
     raise SystemExit(asyncio.run(_check()))
