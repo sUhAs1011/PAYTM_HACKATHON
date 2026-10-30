@@ -164,7 +164,9 @@ async def get_pincode_peer_rates(
         await client.table("invoices")
         .select("id,merchant_id")
         .in_("merchant_id", merchant_ids)
-        .gte("invoice_date", start_date.isoformat())
+        # start_date is the exclusive boundary so the inclusive end date spans
+        # exactly 14 calendar dates, not 15.
+        .gt("invoice_date", start_date.isoformat())
         .lte("invoice_date", end_date.isoformat())
         .neq("id", current_invoice["id"])
         .limit(1000)

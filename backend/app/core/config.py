@@ -1,7 +1,8 @@
-"""Runtime configuration for the API gateway (Module 2 slice 1).
+"""Runtime settings shared by the API, Gemini client, and cropper.
 
-Env-driven only — never bake secrets or database URLs into the repo
-(AGENTS.md locked decision). See ../.env.example for the documented names.
+Settings are loaded from the repo-root `.env` for host runs and from Compose's
+backend environment for container runs. Secrets are never checked into this
+repository.
 """
 
 import os
@@ -9,29 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# Upload limits — the frontend (Module 1) already enforces 20 MB client-side;
-# this is the server-side mirror of that contract. CIS §4 allows image/pdf.
+# Upload limits mirror the Angular scanner and CIS image/PDF contract.
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_UPLOAD_CONTENT_TYPES = ("image/jpeg", "image/png", "application/pdf")
-
-# Tally/Marg export formats (CIS §4). Unknown format values are rejected.
 EXPORT_FORMATS = ("tally", "marg")
-
-# The only golden sample the CIS §5 fixture defines.
 GOLDEN_SAMPLE_ID = "sample_pen_edit_01"
 
 
-def fixture_candidates() -> tuple:
-    """Where the golden fixture may live, in priority order.
-
-    1. PARCHA_FIXTURE_PATH — explicit override (Docker mount or host run).
-    2. /contracts/demo_bill_fixture.json — the compose mount of ./contracts
-       (backend build context excludes the repo root, so the file is mounted,
-       never baked).
-    3. <repo-root>/contracts/demo_bill_fixture.json — host runs from backend/
-       walking up exactly like the db.py smoke check does.
-    """
-    candidates = []
+def fixture_candidates() -> tuple[Path, ...]:
+    """Return candidate paths to the golden fixture, explicit override first."""
+    candidates: list[Path] = []
     override = os.environ.get("PARCHA_FIXTURE_PATH", "").strip()
     if override:
         candidates.append(Path(override))
@@ -42,26 +30,34 @@ def fixture_candidates() -> tuple:
 
 @dataclass(frozen=True)
 class Settings:
-    """Snapshot of the env config at startup time."""
-
     url: str
     secret_key: str
     demo_merchant_id: str
+    gemini_api_key: str
+    environment: str
+    base_dir: Path
+    static_dir: Path
 
     @classmethod
     def from_env(cls) -> "Settings":
-        url = os.environ.get("SUPABASE_URL", "").strip()
-        key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
-        demo = os.environ.get("PARCHA_DEMO_MERCHANT_ID", "").strip()
-        return cls(url=url, secret_key=key, demo_merchant_id=demo)
+        backend_dir = Path(__file__).resolve().parents[2]
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip().strip("\"'")
+        return cls(
+            url=os.environ.get("SUPABASE_URL", "").strip(),
+            secret_key=os.environ.get("SUPABASE_SECRET_KEY", "").strip(),
+            demo_merchant_id=os.environ.get("PARCHA_DEMO_MERCHANT_ID", "").strip(),
+            gemini_api_key=api_key,
+            environment=os.environ.get("ENVIRONMENT", "development").strip(),
+            base_dir=backend_dir,
+            static_dir=backend_dir / "static",
+        )
 
 
-_settings: Optional["Settings"] = None
+_settings: Optional[Settings] = None
 
 
 def get_settings() -> Settings:
-    """Load repo-root .env once and cache the snapshot. Called at app
-    startup; routers reuse the cached instance (no per-request re-parse)."""
+    """Load and cache runtime settings (root `.env` on host, env in Compose)."""
     global _settings
     if _settings is None:
         load_env()
@@ -70,17 +66,16 @@ def get_settings() -> Settings:
 
 
 def reset_settings() -> None:
-    """Test hook: force the next get_settings() to re-read the env."""
+    """Test hook for environment changes between in-process test cases."""
     global _settings
     _settings = None
 
 
 def load_env() -> None:
-    """Load the repo-root .env (same explicit-path rule as db.py: only ever
-    the ROOT .env; a subfolder .env would shadow it)."""
+    """Load only the repository-root .env; a subfolder file must not shadow it."""
     try:
         from dotenv import load_dotenv
 
         load_dotenv(Path(__file__).resolve().parents[3] / ".env")
-    except ImportError:  # python-dotenv is in requirements; tolerate its absence
-        pass
+    except ImportError:  # python-dotenv is a declared backend dependency
+        return

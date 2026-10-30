@@ -14,6 +14,8 @@ services:
       # CIS golden fixture: mounted read-only because the backend build
       # context excludes the repo root (same pattern as the frontend mount).
       - ./contracts:/contracts:ro
+      # Shared Python Pydantic contracts used by the Gemini service.
+      - ./contracts:/app/contracts:ro
     expose:
       - "8000"
     healthcheck:

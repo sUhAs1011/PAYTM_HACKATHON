@@ -1,6 +1,6 @@
 # Soumya — Module 4 Logic
 
-Module 4 validates supplier bills, compares rates against supplier and local peer history, and simulates weekly credit repayments. It uses the shared Supabase client from `backend/app/core/db.py`; it does not create or modify database tables.
+Module 4 validates supplier bills, compares rates against supplier and local peer history, and contains weekly-credit simulation services. It uses the shared Supabase client from `backend/app/core/db.py`; it does not create or modify database tables. In the integrated app, only the compatible read-only credit GET routes are mounted; the weekly-credit POST routes remain unmounted by user decision to preserve the existing ledger contract.
 
 ## Logging
 
@@ -9,9 +9,9 @@ Module 4 validates supplier bills, compares rates against supplier and local pee
 ## Data flow
 
 1. `GET /api/parcha/{invoice_id}/validate` reads `invoices` and `invoice_line_items`. Python `Decimal` recomputes each line's net, GST, line total, and true landed unit cost, then compares the sum with `invoices.billed_total`. The response includes `is_valid` and structured alerts for a total mismatch, stored landed-cost drift, missing lines, or OCR confidence below 0.80. `GET /api/parcha/{invoice_id}/alerts` exposes that alert list directly for the frontend.
-2. `GET /api/parcha/{invoice_id}/price-analysis` resolves the invoice's merchant and supplier, then compares each SKU's current billed rate with the median of up to three prior invoices for that merchant and supplier. It also averages same-SKU billed rates from invoices of other merchants in the same pincode over the 14 days up to the invoice date. The peer benchmark activates only when there are at least five distinct peer merchants. Peer IDs and supplier names are not returned.
-3. `GET /api/credit/{invoice_id}/recommendation` uses successful incoming transactions (matching the merchant VPA) from the previous 30 days. The principal is the invoice's `billed_total`; the weekly EMI cap is 35% of average weekly QR earnings. A merchant's `avg_daily_qr_volume` is used only when the transaction history yields no successful earnings, and the response identifies that fallback.
-4. `POST /api/credit/{invoice_id}/accept` requires `{"mandate_accepted": true}` and creates a simulated loan plus a `LOAN_DISBURSEMENT_SIMULATED` ledger entry. `POST /api/credit/loans/{loan_id}/simulate-week` applies successful incoming QR receipts from successive non-overlapping historical seven-day windows (anchored at loan creation) against the weekly installment, updates the loan balance, and records one paid, missed, or partial ledger event per simulated week. The live ledger has a unique constraint allowing only one entry per loan per India-local calendar day; weekly events are stamped at the simulated installment date to respect it. Partial-event kind records both the paid amount (`amount`) and missed amount (kind suffix). This makes the flow demoable from existing transaction history; it is not a live settlement sweep. Missed amounts are alert records, not real autopay or bank debits. `GET .../schedule` and `GET .../alerts` expose the schedule and missed-payment alerts.
+2. `GET /api/parcha/{invoice_id}/price-analysis` resolves the invoice's merchant and supplier, then compares each SKU's current billed rate with the median of up to three prior invoices for that merchant and supplier. The API keeps a per-store-weighted peer average as a diagnostic, while the CIS Mandi-Pulse median is computed from eligible 14-day invoice-history rates and activates only with at least five distinct peer merchants. Peer IDs and supplier names are not returned.
+3. `GET /api/credit/{invoice_id}/recommendation` uses successful incoming transactions (matching the merchant VPA) from the previous 30 days. The principal is `approved_total` (not the freight-inclusive `billed_total`); the weekly EMI cap is 35% of average weekly QR earnings. A merchant's `avg_daily_qr_volume` is used only when the transaction history yields no successful earnings, and the response identifies that fallback.
+4. The weekly-credit service functions still exist for isolated tests/future review, but integrated `main.py` does **not** mount `POST /api/credit/{invoice_id}/accept` or `POST /api/credit/loans/{loan_id}/simulate-week`. Their `LOAN_DISBURSEMENT_SIMULATED` / `WEEKLY_EMI_*` ledger kinds differ from the approved ledger vocabulary. The user chose no schema/vocabulary change; compatible GET recommendation/schedule/alerts routes remain mounted. The service's simulated windows proceed forward from loan creation; this is not a live settlement sweep, and missed amounts are not real autopay withdrawals.
 
 ## Existing database contracts used
 
@@ -31,11 +31,11 @@ Table and column use is based on the CIS in `documents/engineering_document_core
 | --- | --- | --- |
 | GET | `/api/parcha/{invoice_id}/validate` | Recompute bill math and GST; return line calculations and alerts. |
 | GET | `/api/parcha/{invoice_id}/alerts` | Return frontend-consumable validation alerts. |
-| GET | `/api/parcha/{invoice_id}/price-analysis` | Return same-supplier history and gated pincode peer averages. |
+| GET | `/api/parcha/{invoice_id}/price-analysis` | Return same-supplier history and gated pincode peer median (plus the diagnostic per-store average). |
 | GET | `/api/credit/{invoice_id}/recommendation` | Calculate eligibility, weekly cap, tenure, and EMI schedule. |
-| POST | `/api/credit/{invoice_id}/accept` | Simulate accepting a mandate and creating a loan. |
+| POST | `/api/credit/{invoice_id}/accept` | Implemented in the branch service but **not mounted** in integrated main (ledger-kind policy). |
 | GET | `/api/credit/loans/{loan_id}/schedule` | Return schedule, balance, and ledger records. |
-| POST | `/api/credit/loans/{loan_id}/simulate-week` | Simulate a weekly QR sweep and report any missed amount. |
+| POST | `/api/credit/loans/{loan_id}/simulate-week` | Implemented in the branch service but **not mounted** in integrated main (ledger-kind policy). |
 | GET | `/api/credit/loans/{loan_id}/alerts` | Return persisted missed-installment alerts. |
 
 ## Verification

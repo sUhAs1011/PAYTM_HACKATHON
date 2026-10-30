@@ -1,26 +1,9 @@
-"""POST /api/parcha/{id}/resolve — CIS §4 (Module 2 slice 1).
+"""POST /api/parcha/{id}/resolve — CIS §4 APPROVE_SPLIT persistence.
 
-Body: {"action": "APPROVE_SPLIT", "tenure_days": 7}. APPROVE_SPLIT is the
-only action in the spec.
-
-Behavior on a DB-backed invoice:
-  1. Guards: unknown invoice → 404 · already-resolved (existing loan or
-     status SETTLED) → 409 · approval≤0 → 422.
-  2. Plan the schedule via the CreditRules seam (provisional Decimal
-     formulas today; Module 4's engine replaces it without gateway
-     changes).
-  3. Best-effort write sequence (PostgREST has no cross-table tx):
-     gst_ims_records row (PENDING) → split_credit_loans row → invoice
-     status DISPUTED_PENDING_IMS. Any failure mid-sequence is logged with
-     the stage name and returned as 500 so partial state is inspectable.
-  4. Respond with ResolveActionResponse (PAYOUT_APPROVED.data shape — the
-     documented ASSUMPTION in contracts.ts). WhatsApp dispatch stays a
-     seam (log-only; live Business API is a later integration slice).
-
-NOTE for the WebSocket slice (user-approved policy): scan uploads broadcast
-SCAN_STARTED/AUDIT_COMPLETE; resolve and /api/demo/load-sample are REST-only.
-Resolve's missing PAYOUT_APPROVED broadcast is an explicit CIS §4 Event 3
-deviation until the frontend is coordinated to avoid duplicate application.
+Resolve is REST-only under the user-approved policy: the current frontend
+applies this response directly, so emitting PAYOUT_APPROVED as well would
+double-apply the same transition. This is the documented CIS §4 Event 3
+deviation; do not change without coordinating with Module 1.
 """
 
 import logging
@@ -30,12 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
-from app.contracts import (
-    LoanSchedule,
-    ResolveActionResponse,
-    ResolveRequest,
-    WhatsappClaim,
-)
+from app.contracts import LoanSchedule, ResolveActionResponse, ResolveRequest, WhatsappClaim
 from app.core import repo
 from app.core.db import get_client
 from app.core.money import as_float, dec, q2
@@ -44,17 +22,12 @@ from app.services.credit_rules import get_credit_rules
 logger = logging.getLogger("parchapay.api")
 router = APIRouter()
 
-# The contract example's distributor phone: used only when the seeded
-# supplier row has no phone (every seeded supplier does).
 FALLBACK_DISTRIBUTOR_PHONE = "+919876543210"
-
 SETTLEMENT_METHOD = "SOUNDBOX_7_DAY_SPLIT"
 
 
 def _auto_locked_deadline(invoice_date: Optional[date]) -> Optional[str]:
-    """The 14th of the invoice month, or of the month after it when the
-    invoice is dated later than the 14th (fixture semantics: invoice
-    2026-10-30 → deadline 2026-11-14)."""
+    """Return the GST IMS 14th deadline for the invoice's applicable month."""
     if invoice_date is None:
         return None
     if invoice_date.day <= 14:
@@ -67,14 +40,14 @@ def _auto_locked_deadline(invoice_date: Optional[date]) -> Optional[str]:
 @router.post("/api/parcha/{invoice_id}/resolve", response_model=ResolveActionResponse)
 async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveActionResponse:
     client = await get_client()
-
     bundle = await repo.get_invoice_bundle(client, invoice_id)
     if not bundle:
         raise HTTPException(status_code=404, detail=f"invoice {invoice_id} not found")
+
     invoice = bundle
     supplier = bundle.get("suppliers") or None
     merchant = await repo.get_merchant(client, bundle.get("merchant_id", ""))
-    if merchant is None:  # FK-guaranteed; defensive only
+    if merchant is None:
         raise HTTPException(status_code=404, detail=f"merchant row for invoice {invoice_id} missing")
 
     existing = await repo.get_loan_for_invoice(client, invoice_id)
@@ -86,13 +59,15 @@ async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveAction
     principal = dec(invoice.get("approved_total", 0))
     if principal <= Decimal("0"):
         raise HTTPException(status_code=422, detail="invoice approved_total is not positive; nothing to finance")
+    plan = await get_credit_rules().plan(merchant, principal, body.tenure_days)
+    if not plan.is_eligible:
+        raise HTTPException(
+            status_code=409,
+            detail="approved_total exceeds the 35% daily QR velocity cap for this tenure",
+        )
 
-    plan = get_credit_rules().plan(merchant, principal, body.tenure_days)
-
-    # --- best-effort write sequence (no cross-table tx in PostgREST) ---
-    # IMS: every invoice already carries an IMS record in the seeded data,
-    # so resolve upserts the dispute flag (PENDING = disputed/pending
-    # re-verification in ims vocabulary) rather than duplicating the row.
+    # PostgREST has no cross-table transaction. IMS is updated in place for
+    # seeded invoices (one row per invoice); otherwise a pending row is added.
     try:
         ims = await repo.get_ims_record_for_invoice(client, invoice_id)
         if ims:
@@ -143,7 +118,7 @@ async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveAction
             f"Day 1: {as_float(plan.daily_deduction)} deducted from today's QR sweep. "
             "[View Verified Challan Crop & Collect via Paytm Link]"
         ),
-        status="SENT",  # queued-for-dispatch marker; live send is a later slice
+        status="SENT",  # queued-for-dispatch marker; live WhatsApp send is not implemented
     )
     return ResolveActionResponse(
         invoice_id=invoice_id,

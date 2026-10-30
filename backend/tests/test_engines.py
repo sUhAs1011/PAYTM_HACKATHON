@@ -74,6 +74,9 @@ class WaterfallEngineTests(unittest.TestCase):
         self.assertEqual(
             result["pincode_benchmark"]["average_rate"], Decimal("121.00")
         )
+        self.assertEqual(
+            result["pincode_benchmark"]["median_rate"], Decimal("120.00")
+        )
         self.assertEqual(result["pincode_benchmark"]["peer_store_count"], 5)
         self.assertTrue(result["pincode_benchmark"]["gate_active"])
         self.assertEqual(result["rate_status"], "FLAGGED_HIGH")
@@ -87,6 +90,7 @@ class WaterfallEngineTests(unittest.TestCase):
         )
         self.assertFalse(result["pincode_benchmark"]["gate_active"])
         self.assertIsNone(result["pincode_benchmark"]["average_rate"])
+        self.assertIsNone(result["pincode_benchmark"]["median_rate"])
 
 
 class CreditEngineTests(unittest.TestCase):

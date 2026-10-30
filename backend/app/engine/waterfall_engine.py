@@ -43,15 +43,19 @@ def analyze_price(
         per_store_rates[str(merchant_id)].append(
             money(as_decimal(rate, "peer_rate"))
         )
-    anonymized_rates = [
-        _average(rates) for rates in per_store_rates.values()
-    ]
+    # Keep the previous per-store-weighted average as a diagnostic for the
+    # additive price-analysis GET API, but CIS Mandi-Pulse is explicitly a
+    # median of eligible invoice-history observations, not an average.
+    anonymized_rates = [_average(rates) for rates in per_store_rates.values()]
     peer_average = _average(rate for rate in anonymized_rates if rate is not None)
+    peer_median = _median(
+        rate for rates in per_store_rates.values() for rate in rates
+    )
     peer_count = len(per_store_rates)
     gate_active = peer_count >= min_distinct_stores
     peer_delta = (
-        money(current - peer_average)
-        if gate_active and peer_average is not None
+        money(current - peer_median)
+        if gate_active and peer_median is not None
         else None
     )
 
@@ -68,6 +72,7 @@ def analyze_price(
         "pincode_benchmark": {
             "peer_store_count": peer_count,
             "average_rate": peer_average if gate_active else None,
+            "median_rate": peer_median if gate_active else None,
             "delta": peer_delta,
             "price_increased": peer_increased,
             "gate_active": gate_active,

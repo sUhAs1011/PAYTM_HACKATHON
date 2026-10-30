@@ -28,6 +28,13 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
   imports: [AuditTableComponent, SoundboxTwinComponent, SplitCreditComponent, WhatsappDrawerComponent],
   template: `
     <div class="counter-shell">
+      <input
+        #laptopFileInput
+        type="file"
+        accept="image/*"
+        hidden
+        (change)="onLaptopFileSelected($event)"
+      />
       <header class="topbar">
         <div class="brand">
           <div class="mark">&#8377;</div>
@@ -47,15 +54,15 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
             @case ('RECONNECTING') {
               <span class="chip warn">&#9679; Reconnecting&hellip;</span>
             }
-            @case ('DEMO_MODE') {
-              <span class="chip warn">&#9679; Demo fixture mode</span>
-            }
           }
           @if (stage() !== 'IDLE') {
-            <button class="btn-ghost" (click)="reset()">Reset demo</button>
+            <button class="btn-ghost" (click)="reset()">Reset</button>
           }
-          <button class="btn-primary" (click)="loadDemoBill()" [disabled]="busy()">
-            Load Demo Bill
+          <button class="btn-primary" (click)="laptopFileInput.click()" [disabled]="busy()">
+            &#128247; Upload Bill
+          </button>
+          <button class="btn-ghost" (click)="loadDemoBill()" [disabled]="busy()">
+            Load Sample
           </button>
         </div>
       </header>
@@ -67,17 +74,17 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
               <div class="idle-icon">&#128247;</div>
               <h2>Awaiting supplier parcha&hellip;</h2>
               <p>
-                On the shopkeeper&rsquo;s phone, open <code>/scan</code> at this machine&rsquo;s LAN
-                address and capture the delivery bill &mdash; pen markups included. The audit lands
-                here within 3.5 seconds.
+                Snap a photo on the shopkeeper&rsquo;s phone at <code>/scan</code>, or select an
+                invoice photo directly from your laptop.
               </p>
-              <p class="fail-safe">
-                Fail-safe for the pitch: if venue internet or camera lighting fails, load the golden
-                demo bill instead.
-              </p>
-              <button class="btn-primary big" (click)="loadDemoBill()" [disabled]="busy()">
-                Load Demo Bill
-              </button>
+              <div style="display: flex; gap: 12px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
+                <button class="btn-primary big" (click)="laptopFileInput.click()" [disabled]="busy()">
+                  &#128247; Upload Bill Photo
+                </button>
+                <button class="btn-ghost" (click)="loadDemoBill()" [disabled]="busy()">
+                  Load Sample Fixture
+                </button>
+              </div>
             </div>
           </section>
         }
@@ -505,9 +512,12 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
     }
     .crop img {
       width: 100%;
+      max-height: 320px;
+      object-fit: contain;
       border-radius: 10px;
       border: 1px solid var(--pp-line);
       display: block;
+      background: #0b1322;
     }
 
     .payout-note {
@@ -567,6 +577,28 @@ export class CounterComponent implements OnDestroy {
     );
   }
 
+  async onLaptopFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file) {
+      return;
+    }
+    this.busy.set(true);
+    this.stage.set('PROCESSING');
+    this.processingMessage.set('Auditing supplier parcha via Gemini 2.5 Flash…');
+    try {
+      const audit = await this.api.scan(file);
+      this.applyAudit(audit);
+    } catch (err) {
+      console.error('[counter] Bill scan failed', err);
+      alert(err instanceof Error ? err.message : 'Bill scan failed');
+      this.stage.set('IDLE');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
   async loadDemoBill(): Promise<void> {
     if (this.busy()) {
       return;
@@ -622,6 +654,12 @@ export class CounterComponent implements OnDestroy {
   }
 
   private applyAudit(audit: AuditCompleteData): void {
+    // Laptop uploads receive both a REST response and AUDIT_COMPLETE over WS.
+    // Treat the invoice ID as the transition key so the Soundbox speaks and
+    // drawer state changes only once for that scan.
+    if (this.audit()?.invoice_id === audit.invoice_id && this.stage() === 'AUDIT_ALERT') {
+      return;
+    }
     this.audit.set(audit);
     this.payout.set(null);
     this.whatsappOpen.set(false);
@@ -630,6 +668,9 @@ export class CounterComponent implements OnDestroy {
   }
 
   private applyPayout(payout: PayoutApprovedData): void {
+    if (this.payout()?.invoice_id === payout.invoice_id && this.stage() === 'RESOLVED') {
+      return;
+    }
     this.payout.set(payout);
     this.whatsappOpen.set(true);
     this.stage.set('RESOLVED');

@@ -9,24 +9,17 @@ import {
   WsEventName,
 } from '@contracts/contracts';
 
-export type WsConnectionState = 'CONNECTING' | 'OPEN' | 'RECONNECTING' | 'DEMO_MODE';
+export type WsConnectionState = 'CONNECTING' | 'OPEN' | 'RECONNECTING';
 
 /**
  * Manages the persistent `/ws/counter` connection (CIS §4).
  *
- * Real mode: connects through the Angular dev-server proxy on port 4200
- * (never directly to the API origin — CIS §6.2) and fans the three CIS
- * events out to typed observables.
- *
- * Demo mode (Module 1 mock-first isolation): when the backend is absent,
- * `enableDemoMode()` stops all network attempts and the same observables are
- * fed by `mock*()` injections — so `/counter` runs one code path for both
- * mock fixture runs and the real pipeline.
+ * Connects through the Angular dev-server proxy on port 4200 (never directly
+ * to the API origin — CIS §6.2) and fans CIS events out to typed observables.
  */
 @Injectable({ providedIn: 'root' })
 export class WebsocketService implements OnDestroy {
   private socket: WebSocket | null = null;
-  private mockMode = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly maxReconnectDelayMs = 15000;
@@ -55,9 +48,6 @@ export class WebsocketService implements OnDestroy {
   }
 
   private connect(): void {
-    if (this.mockMode) {
-      return;
-    }
     this.connectionState.set(this.reconnectAttempts === 0 ? 'CONNECTING' : 'RECONNECTING');
     try {
       this.socket = new WebSocket(this.wsUrl());
@@ -109,9 +99,6 @@ export class WebsocketService implements OnDestroy {
   }
 
   private scheduleReconnect(): void {
-    if (this.mockMode) {
-      return;
-    }
     this.reconnectAttempts += 1;
     this.connectionState.set('RECONNECTING');
     const delay = Math.min(1000 * 2 ** (this.reconnectAttempts - 1), this.maxReconnectDelayMs);
@@ -119,38 +106,6 @@ export class WebsocketService implements OnDestroy {
       clearTimeout(this.reconnectTimer);
     }
     this.reconnectTimer = setTimeout(() => this.connect(), delay);
-  }
-
-  /**
-   * Switch to fixture-driven demo mode: close the socket, stop reconnecting.
-   * Used by ApiService when the backend is unreachable (Module 1 mock-first).
-   */
-  enableDemoMode(): void {
-    this.mockMode = true;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.socket) {
-      this.socket.onclose = null;
-      this.socket.close(1000, 'demo-mode');
-      this.socket = null;
-    }
-    this.connectionState.set('DEMO_MODE');
-  }
-
-  // -- Mock event injection: same subjects as the live socket, one code path --
-
-  mockScanStarted(data: ScanStartedData): void {
-    this.scanStartedSubject.next(data);
-  }
-
-  mockAuditComplete(data: AuditCompleteData): void {
-    this.auditCompleteSubject.next(data);
-  }
-
-  mockPayoutApproved(data: PayoutApprovedData): void {
-    this.payoutApprovedSubject.next(data);
   }
 
   ngOnDestroy(): void {

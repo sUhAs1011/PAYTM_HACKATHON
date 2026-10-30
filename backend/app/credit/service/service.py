@@ -53,7 +53,10 @@ async def get_credit_recommendation(invoice_id: str) -> dict[str, Any]:
         invoice_id,
         len(transactions),
     )
-    principal = as_decimal(invoice["billed_total"], "billed_total")
+    # CIS underwriting is based on the audited/approved line-item amount, not
+    # the stored billed_total (which can include freight and other unitemized
+    # charges in the synthetic/live invoice data).
+    principal = as_decimal(invoice["approved_total"], "approved_total")
     plan = weekly_repayment_plan(principal, average_weekly)
 
     if average_weekly <= ZERO and merchant and merchant.get("avg_daily_qr_volume") is not None:
@@ -217,8 +220,8 @@ async def simulate_credit_week(loan_id: str) -> dict[str, Any]:
     )
     if loan_created.tzinfo is None:
         loan_created = loan_created.replace(tzinfo=timezone.utc)
-    period_end = loan_created - timedelta(days=(week_number - 1) * 7)
-    period_start = period_end - timedelta(days=7)
+    period_start = loan_created + timedelta(days=(week_number - 1) * 7)
+    period_end = period_start + timedelta(days=7)
     merchant = await get_merchant(str(loan["merchant_id"]))
     if merchant is None:
         raise LookupError("Merchant not found")

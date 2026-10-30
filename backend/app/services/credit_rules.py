@@ -1,50 +1,36 @@
-"""CreditRules — the Module 2 ⇄ Module 4 seam (resolve path).
+"""CIS 7-day daily-credit rules backed by Module 4 QR history.
 
-Module 4 owns the deterministic credit/underwriting engine (Decimal math,
-35%-cap sourcing over the 30-day QR history, full schedule). Until it is
-wired, this provisional implementation applies the documented formulas
-directly — the SAME formulas the synthetic seed was generated with, so
-rows written by this slice stay consistent with the seeded invariants:
-
-  - daily_cap_limit = 0.35 × merchant.avg_daily_qr_volume
-    (source = the stored merchant column, mirroring the seeded
-    split_credit_loans.daily_cap_limit invariant. Deliberately NOT
-    recomputed from `transactions` — that comparison is Module 4's live
-    engine work; the two sources agree by data-generation rule.)
-  - principal = invoice.approved_total
-  - daily_deduction = (principal / tenure_days).quantize(0.01, HALF_UP)
-  - remaining_balance = principal − daily_deduction
-    (Day-1 sweep already booked — the demo semantics per CIS §5 fixture
-    `loan_schedule.day_1_deducted = true`.)
-
-Golden-fixture cap (3500/24500 on a hypothetical seed merchant) vs. seed
-merchant caps differ — KNOWN SPEC TENSION (AGENTS.md), untouched here.
-Module 4's engine replaces this class via set_credit_rules; gateway code
-does not change.
+The Soumya weekly-credit write flow is intentionally not mounted; this
+adapter serves the CIS scan pre-approval and APPROVE_SPLIT resolve flow only.
+All financial quantities are Decimal and quantized to paise.
 """
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional, Protocol
 
 from app.core.money import q2
 
 logger = logging.getLogger("parchapay.api")
-
 DAILY_CAP_RATIO = Decimal("0.35")
+HISTORY_DAYS = 30
 
 
 @dataclass(frozen=True)
 class CreditPlan:
     daily_cap: Decimal
+    max_credit_limit: Decimal
+    is_eligible: bool
     principal: Decimal
     daily_deduction: Decimal
     remaining_balance: Decimal
+    average_daily_qr_volume: Decimal
 
 
 class CreditRules(Protocol):
-    def plan(self, merchant: dict, principal: Decimal, tenure_days: int) -> CreditPlan:  # pragma: no cover
+    async def plan(self, merchant: dict, principal: Decimal, tenure_days: int) -> CreditPlan:
         ...
 
 
@@ -52,19 +38,64 @@ _rules: Optional[CreditRules] = None
 
 
 def set_credit_rules(implementation: CreditRules) -> None:
-    """Integration point for Module 4: register the real engine."""
+    """Integration seam; Module 4's QR-backed implementation is registered at startup."""
     global _rules
     _rules = implementation
-    logger.info("CreditRules seam replaced: %s", type(implementation).__name__)
+    logger.info("CreditRules seam set: %s", type(implementation).__name__)
 
 
 def get_credit_rules() -> CreditRules:
-    return _rules if _rules is not None else ProvisionalCreditRules()
+    if _rules is None:
+        raise RuntimeError("CreditRules not initialized; app lifespan must register LiveCreditRules")
+    return _rules
 
 
-class ProvisionalCreditRules:
-    def plan(self, merchant: dict, principal: Decimal, tenure_days: int) -> CreditPlan:
-        avg_daily = Decimal(str(merchant["avg_daily_qr_volume"]))
-        cap = q2(DAILY_CAP_RATIO * avg_daily)
-        daily = q2(principal / Decimal(tenure_days))
-        return CreditPlan(daily_cap=cap, principal=principal, daily_deduction=daily, remaining_balance=q2(principal - daily))
+class LiveCreditRules:
+    """Compute the CIS daily cap from successful incoming QR transactions over 30 days."""
+
+    async def plan(self, merchant: dict, principal: Decimal, tenure_days: int) -> CreditPlan:
+        from app.credit.db.query import get_transactions
+        from app.engine.credit_engine import successful_qr_amount
+
+        now = datetime.now(timezone.utc)
+        transactions = await get_transactions(
+            str(merchant["id"]),
+            str(merchant["upi_vpa"]),
+            now - timedelta(days=HISTORY_DAYS),
+            now,
+        )
+        total_successful = successful_qr_amount(transactions)
+        if total_successful > 0:
+            average_daily = q2(total_successful / Decimal(HISTORY_DAYS))
+            source = "transactions"
+        else:
+            average_daily = q2(Decimal(str(merchant["avg_daily_qr_volume"])))
+            source = "avg_daily_qr_volume fallback"
+        plan = _make_plan(average_daily, principal, tenure_days)
+        logger.info(
+            "cis_credit_plan merchant_id=%s source=%s eligible=%s",
+            merchant.get("id"), source, plan.is_eligible,
+        )
+        return plan
+
+
+def _make_plan(average_daily: Decimal, principal: Decimal, tenure_days: int) -> CreditPlan:
+    if tenure_days <= 0:
+        raise ValueError("tenure_days must be positive")
+    principal = q2(principal)
+    cap = q2(average_daily * DAILY_CAP_RATIO)
+    max_limit = q2(cap * Decimal(tenure_days))
+    eligible = principal > 0 and principal <= max_limit
+    installment = q2(principal / Decimal(tenure_days))
+    # Never suggest a daily cut above the cap. The resolve endpoint rejects
+    # ineligible principals before writing any rows.
+    daily = min(installment, cap)
+    return CreditPlan(
+        daily_cap=cap,
+        max_credit_limit=max_limit,
+        is_eligible=eligible,
+        principal=principal,
+        daily_deduction=q2(daily),
+        remaining_balance=q2(max(Decimal("0"), principal - daily)),
+        average_daily_qr_volume=q2(average_daily),
+    )

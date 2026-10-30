@@ -27,6 +27,21 @@ async def get_merchant(client, merchant_id: str) -> Optional[dict]:
     return rows[0] if rows else None
 
 
+async def get_suppliers(client) -> list[dict]:
+    response = await client.table("suppliers").select("id,name,gstin,phone,upi_vpa").limit(1000).execute()
+    return response.data or []
+
+
+async def get_canonical_skus(client) -> list[dict]:
+    response = (
+        await client.table("canonical_skus")
+        .select("id,product_name,aliases,standard_mrp")
+        .limit(1000)
+        .execute()
+    )
+    return response.data or []
+
+
 async def first_merchant_with_invoice(client) -> Optional[dict]:
     """Fallback of last resort (B1 chain, step 3): the first seeded merchant
     that owns at least one invoice. Scoped to avoid guessing on zero-invoice
@@ -91,6 +106,18 @@ async def insert_loan(client, payload: dict) -> dict:
     return (response.data or [payload])[0]
 
 
+async def insert_invoice(client, payload: dict) -> dict:
+    response = await client.table("invoices").insert(payload).execute()
+    return (response.data or [payload])[0]
+
+
+async def insert_invoice_line_items(client, payloads: list[dict]) -> list[dict]:
+    if not payloads:
+        return []
+    response = await client.table("invoice_line_items").insert(payloads).execute()
+    return response.data or payloads
+
+
 async def insert_ims_record(client, payload: dict) -> dict:
     response = await client.table("gst_ims_records").insert(payload).execute()
     return (response.data or [payload])[0]
@@ -98,3 +125,8 @@ async def insert_ims_record(client, payload: dict) -> dict:
 
 async def update_invoice_status(client, invoice_id: str, status: str) -> None:
     await client.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
+
+
+async def delete_invoice(client, invoice_id: str) -> None:
+    """Compensate for a failed multi-table scan insert; FK cascades remove children."""
+    await client.table("invoices").delete().eq("id", invoice_id).execute()

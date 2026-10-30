@@ -101,6 +101,7 @@ class CreditRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
                         "id": "invoice-1",
                         "merchant_id": "merchant-1",
                         "billed_total": "100.00",
+                        "approved_total": "100.00",
                     }
                 ),
             ),
@@ -171,7 +172,7 @@ class CreditRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
                         {"amount": "100.00", "txn_status": "SUCCESS"}
                     ]
                 ),
-            ),
+            ) as get_transactions,
             patch(
                 "app.credit.service.service.create_ledger_entry",
                 new=AsyncMock(),
@@ -187,6 +188,11 @@ class CreditRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["remaining_balance"], Decimal("66.67"))
         self.assertEqual(result["status"], "ACTIVE")
         update_loan.assert_awaited_once()
+        query_start = get_transactions.await_args.args[2]
+        query_end = get_transactions.await_args.args[3]
+        loan_created = datetime.fromisoformat(loan["created_at"])
+        self.assertEqual(query_start, loan_created)
+        self.assertEqual(query_end, loan_created + timedelta(days=7))
 
     async def test_week_simulation_alerts_when_qr_receipts_are_missing(self):
         now = datetime.now(timezone.utc)

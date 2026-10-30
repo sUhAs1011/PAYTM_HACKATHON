@@ -1,6 +1,6 @@
 # Full-Stack Merge & Integration Plan (`shreyas` + `soumya` + `suhas` → `main`)
 
-**Date:** 2026-10-31 · **Status:** approved; integration underway
+**Date:** 2026-10-31 · **Status:** merged/integrated; host-verified; Docker/Gemini end-to-end checks pending
 
 ---
 
@@ -23,8 +23,8 @@
    - However, `soumya`'s Module 4 services (`validate_bill`, `analyze_invoice_prices`, `get_credit_recommendation`) and `shreyas`'s `POST /api/parcha/{id}/resolve` & `GET /api/parcha/{id}/export` read from **live Supabase tables** (`invoices`, `invoice_line_items`, `suppliers`, `canonical_skus`). Furthermore, `soumya`'s `analyze_invoice_prices` skips supplier-history and pincode-peer queries if `supplier_id` or `canonical_sku_id` is `None`.
    - Also, `embedding_client.py` is unimplemented across all branches and `canonical_skus.embedding` is `NULL` in the seeded DB; SKU resolution must therefore use the CIS fallback (`canonical_skus.product_name` and `aliases` text matching).
    - **Resolution:** In the integrated `ParchaPipeline`:
-     1. Run `suhas`'s `extract_invoice_from_image()` and `crop_pen_markup()`.
-     2. Match `supplier_gstin` / `supplier_name` against `suppliers` (fallback to the seeded Sharmaji supplier) and match each line's `raw_item_name` against `canonical_skus` (`product_name` + `aliases`).
+      1. Run `suhas`'s `extract_invoice_from_image()` and `crop_pen_markup()`.
+      2. Match `supplier_gstin` / `supplier_name` exactly against `suppliers`; leave `supplier_id` null if no safe match (never misattribute a supplier). Match each line's `raw_item_name` against `canonical_skus` (`product_name` + `aliases`); leave unmatched SKUs null.
      3. Run `soumya`'s `math_engine.calculate_line` and `waterfall_engine.analyze_price` (fed by `soumya`'s `get_supplier_history` and `get_pincode_peer_rates`) + `credit_engine` 30-day QR velocity cap.
       4. Persist the new `invoices` row, `invoice_line_items` rows, and `gst_ims_records` (`PENDING`) row into Supabase so that `resolve`, `export`, the `/api/parcha/{id}/*` routes, and mounted read-only `/api/credit/*` GETs work on every scanned bill.
 
@@ -60,6 +60,11 @@
 8. **[BUG — Weekly simulator searches backward from loan creation]**
    - `soumya.md` describes successive non-overlapping seven-day windows anchored at loan creation. `simulate_credit_week()` currently sets week 1 to the seven days *before* creation and moves farther backward for later weeks, while stamping the ledger due date after creation.
    - **Integration fix:** use forward, non-overlapping windows from loan creation (`created_at + (week-1)*7` through the next seven days), while preserving the documented simulated-only semantics.
+
+9. **[BLOCKER — CIS does not define how a flagged rate hike changes `approved_total`]**
+   - The real pipeline must produce `billed_total`, `approved_total`, and `overcharge_amount`. CIS/PRD require math checks and price flags but do not state whether an above-history/Mandi-Pulse `billed_rate` is automatically repriced for the payout. The fixture's invoice totals do not reconcile to its line items, so it cannot safely settle the formula.
+   - Soumya's engine flags higher prices but does not compute a replacement approved rate. Suhas's scan code sums corrected quantities at the billed rate and compares against the printed grand total, which can include freight/non-itemized charges; that also cannot be carried over as-is.
+   - **User decision:** rate hikes are flagged/reconciled but not auto-repriced. `approved_total` is the Decimal sum of line totals at the invoiced rate using the Gemini-extracted accepted `billed_qty` (after real pen edits); `overcharge_amount` is the sum of positive printed-line-total minus recomputed accepted line-total differences. The invoice-level printed grand total remains `billed_total` for display only and is not used for overcharge/underwriting (it can contain freight/non-itemized charges). This drives WhatsApp amount and CIS credit principal.
 
 ---
 
@@ -100,12 +105,14 @@
    - Unify `backend/app/core/config.py` so `Settings` includes `url`, `secret_key`, `demo_merchant_id`, `gemini_api_key`, and `static_dir`.
    - In `compose.yaml`, mount `./contracts:/contracts:ro` (and support both `/contracts` and repo-root resolution).
 4. **Wire the Real Pipeline (`backend/app/services/pipeline.py` & `credit_rules.py`):**
+   - Apply the user-approved amount rule in item 9; do not reprice a flagged rate.
    - Implement `LiveCreditRules` using `soumya`'s `get_transactions` + `successful_qr_amount` (30-day window, with `avg_daily_qr_volume` fallback) and `0.35` daily velocity cap.
    - Implement `LiveParchaPipeline`:
      - Calls `gemini_vision.extract_invoice_from_image(image_bytes, mime_type)`
      - Uses Gemini's extracted quantities without hard-coded demo-specific correction (do not carry forward Suhas's `12 -> 10` rewrite); uses `pillow_cropper.crop_pen_markup(...)` for actual detected markup.
      - Resolves `supplier_id` and `canonical_sku_id` against Supabase (`suppliers` & `canonical_skus` aliases)
      - Runs `soumya`'s `math_engine.calculate_line` and `waterfall_engine.analyze_price` (with `get_supplier_history` and `get_pincode_peer_rates`)
+     - Fetches supplier/SKU catalogs and per-SKU history/peer data concurrently (deduplicated for repeated SKUs) to limit scan latency toward the CIS 3.5-second target.
      - Computes `split_credit_pre_approval` via `LiveCreditRules`
      - Persists `invoices`, `invoice_line_items`, and `gst_ims_records` (`PENDING`) to Supabase via `repo.py`
      - Returns `AuditedInvoiceResponse` (while `load-sample` continues to use `FixturePipeline` for the golden fixture).
@@ -125,8 +132,10 @@
 
 ## 4. Definition of Done
 
-- [ ] `shreyas`, `soumya`, and `suhas` are cleanly merged into `main` with zero leftover conflict markers.
-- [ ] All mocks in the scan and credit pipelines are replaced by live calls to Module 3 (`gemini_vision`, `pillow_cropper`), Module 4 (`math_engine`, `waterfall_engine`, `credit_engine`), and Module 5 (Supabase persistence + Tally/Marg export).
-- [ ] `python -m unittest discover -s tests -v` passes 100%.
-- [ ] `TestClient` integration suite passes for all CIS §4 endpoints, WebSocket `/ws/counter`, `/static`, and Module 4 endpoints, leaving the Supabase database clean.
-- [ ] `AGENTS.md` is updated; nothing is pushed (`git push` reserved for user).
+- [x] `shreyas`, `soumya`, and `suhas` are integrated into `main`; conflict-marker search is clean.
+- [x] Uploaded scans use Gemini + Pillow + Module 4 Decimal/median-price logic + Supabase invoice/line/IMS persistence. CIS daily-credit underwriting is transaction-backed. The golden fixture remains only for the explicit `load-sample`; weekly-credit write routes remain unmounted by user decision.
+- [x] `python -m unittest discover -s tests -v` passes (23 tests).
+- [x] Host TestClient checks cover CIS routes, WS scan event order/shape, static files, Module 4 read APIs, and live resolve with rollback. 9-table smoke is reachable; live DB started and ended with the same state (57 loans/177 ledger; the extra loan/two ledger rows predated these checks).
+- [ ] Docker Compose/browser-proxy verification (Docker CLI unavailable on this laptop).
+- [ ] Real Gemini bill upload test (not run to avoid an external API call and new live invoice without an explicitly selected test bill).
+- [x] `AGENTS.md` and integration docs updated; nothing pushed (`git push` reserved for user).

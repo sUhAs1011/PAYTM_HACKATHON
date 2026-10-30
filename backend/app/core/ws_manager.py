@@ -1,9 +1,8 @@
 """In-memory WebSocket connection manager for CIS `/ws/counter`.
 
-This is intentionally ephemeral: no auth, room routing, event persistence,
-or replay. Every connected counter receives each broadcast. Locks protect
-connection bookkeeping and serialize writes per socket; the global client
-lock is never held while sending network frames.
+Every connected counter receives each broadcast. Connections are ephemeral:
+no auth, rooms, persistence, or replay. The global client lock is not held
+while sending network frames; per-client locks serialize frame writes.
 """
 
 import asyncio
@@ -14,7 +13,6 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketState
 
 logger = logging.getLogger("parchapay.api.ws")
-
 WsEventName = Literal["SCAN_STARTED", "AUDIT_COMPLETE", "PAYOUT_APPROVED"]
 
 
@@ -28,7 +26,6 @@ class WebSocketManager:
 
     @property
     def client_count(self) -> int:
-        """Best-effort count for diagnostics/tests; mutate only under lock."""
         return len(self._clients)
 
     async def connect(self, websocket: WebSocket) -> None:
@@ -45,29 +42,20 @@ class WebSocketManager:
         logger.info("counter websocket disconnected (clients=%d)", self.client_count)
 
     async def broadcast(self, event: WsEventName, data: dict[str, Any]) -> None:
-        """Send one CIS envelope to the currently connected clients.
-
-        Snapshot under the short-lived connection lock, then send without
-        holding it. Failed/disconnected clients are removed after the send.
-        """
+        """Broadcast one CIS envelope to the clients connected at send time."""
         envelope = {"event": event, "data": data}
         async with self._clients_lock:
             targets = [(client, self._send_locks[client]) for client in self._clients]
-
         if not targets:
             return
 
         results = await asyncio.gather(
-            *(self._send_one(client, send_lock, envelope) for client, send_lock in targets),
+            *(self._send_one(client, lock, envelope) for client, lock in targets),
             return_exceptions=True,
         )
-        failed = [
-            client
-            for (client, _), result in zip(targets, results)
-            if isinstance(result, Exception) or result is False
-        ]
-        for client in failed:
-            await self.disconnect(client)
+        for (client, _), result in zip(targets, results):
+            if isinstance(result, Exception) or result is False:
+                await self.disconnect(client)
 
     async def _send_one(
         self,

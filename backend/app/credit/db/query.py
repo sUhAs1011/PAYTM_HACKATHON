@@ -56,7 +56,9 @@ async def get_transactions(
         .order("created_at")
     )
     if end is not None:
-        query = query.lte("created_at", end.isoformat())
+        # Seven-day simulation windows are [start, end), so a transaction on
+        # a boundary belongs to exactly one cycle, not both adjacent weeks.
+        query = query.lt("created_at", end.isoformat())
     results = []
     offset = 0
     page_size = 1000

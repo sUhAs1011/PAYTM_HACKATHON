@@ -36,7 +36,7 @@ This reference guide contains everything needed to configure, run, and demonstra
 ## 3. End-to-End Demo Workflow (4 Journey States)
 
 ```
-[Phone: /scan]                [Laptop Projector: /counter]
+[Phone: /scan or laptop Upload Bill] [Laptop Projector: /counter]
       │                                     ▲
       │ (POST image)                        │ (WebSocket /ws/counter)
       ▼                                     │
@@ -50,39 +50,39 @@ This reference guide contains everything needed to configure, run, and demonstra
       │          │ • 3-Tier Waterfall (History -> Mandi-Pulse -> MRP Floor)
       │          │ • 7-Day Split-Credit (35% Velocity Cap)
       │          ▼
-      ├──► [Sarvam AI TTS] ───────────────────────────► /static/audio/
-      │
       └──► [Supabase Postgres + pgvector]
                  │
                  ▼
        [Broadcast: AUDIT_COMPLETE (<3.5s)] ──► [Soundbox Speaks & Displays Card]
                  │
                  ▼
-       [Merchant Clicks Paytm Button] ───────► [PAYOUT_APPROVED]
-                                               • WhatsApp Dispute Crop Note
-                                               • GST IMS Shield Active
-                                               • 7-Day QR Split Deduction
+        [Merchant Clicks Paytm Button] ───────► [POST /resolve response]
+                                                • WhatsApp Dispute Preview
+                                                • GST IMS Shield Active
+                                                • 7-Day QR Split Schedule
 ```
+
+**Current integration notes:** uploaded scans use Gemini 2.5 Flash, Pillow, Decimal auditing, and Supabase persistence. Sarvam audio synthesis is not implemented in these branches; the fixture WAV is intentionally absent, so use the Soundbox transcript speech fallback. `load-sample` and resolve are REST-only; resolve does not emit `PAYOUT_APPROVED` because the frontend also applies the REST response. The UPI Autopay badge is a stored/demo state, not a live mandate registration.
 
 ### Flow Details
 1. **State 1: IDLE**
    * Laptop screen shows `"Awaiting supplier parcha..."` with today's collections.
    * Soundbox twin screen indicates `"Ready for the next parcha"`.
 2. **State 2: PROCESSING (~1.5s - 3s)**
-   * Merchant snaps photo of the paper parcha on their phone.
-   * The phone sends `POST /api/parcha/scan`.
+    * Merchant snaps a photo on the phone or selects a bill using the laptop's **Upload Bill** button.
+    * The client sends `POST /api/parcha/scan`.
    * Realtime WebSocket pushes `{"event": "SCAN_STARTED"}` to the laptop.
    * Laptop Soundbox screen immediately animates with a laser-sweep: `"Auditing Parcha... Gemini 2.5 Flash / Decimal audit / Mandi-Pulse"`.
 3. **State 3: AUDIT ALERT**
    * Realtime WebSocket pushes `{"event": "AUDIT_COMPLETE"}`.
-   * **Voice Alert:** Soundbox speaks aloud: *"Sharmaji Wholesale bill checked. Oil rate up by Rs 6, pen math error of Rs 140. Pay Rs 13,860."*
+    * **Voice Alert:** Soundbox speaks the returned transcript. Live Sarvam audio is not generated; if the audio URL is absent, use the tap-to-speak browser fallback.
    * **Front Screen:** Shows red overcharge warning `⚠ Overcharge ₹140 · Pay ₹13,860`.
    * **Audit Table:** Shows red row for Fortune Oil (rate hike + pen edit from 12 to 10), yellow row for Parle-G (76% OCR confidence review), Mandi-Pulse benchmark badge, and pen strikethrough crop.
 4. **State 4: RESOLVED & FINANCED**
    * Merchant presses the physical 3D **Paytm Button** on the Soundbox twin.
    * Sends `POST /api/parcha/{id}/resolve` with `{"action": "APPROVE_SPLIT", "tenure_days": 7}`.
-   * Realtime WebSocket pushes `{"event": "PAYOUT_APPROVED"}`:
-     * **WhatsApp Drawer:** Slides out showing the distributor message preview, cropped pen proof, and Paytm payment link.
+    * `POST /api/parcha/{id}/resolve` returns the payout/loan schedule; the counter applies the REST response (no payout WS event).
+      * **WhatsApp Drawer:** Slides out showing the distributor message preview, crop proof when present, and Paytm payment link preview.
      * **GST IMS Shield:** Flips status to `Shield Active · DISPUTED_PENDING_IMS` (protects before 14th of month).
      * **7-Day Soundbox Split:** Displays 7-day schedule (Day 1 ₹1,980 deducted from QR sweep, remaining ₹11,880, backup UPI Autopay active).
 
@@ -95,10 +95,11 @@ This reference guide contains everything needed to configure, run, and demonstra
 docker compose up --build
 ```
 
-### Run Frontend Alone (Isolated Mock Mode)
+### Run Frontend Alone (UI only)
 ```bash
 docker compose up --build -d --no-deps frontend
 ```
+The integrated frontend no longer falls back to a local mock API; backend-backed actions require the API service.
 
 ### Rebuilding after Frontend Changes
 ```bash
@@ -118,7 +119,7 @@ docker compose up --build -d --no-deps frontend
 ### WebSocket Events (`/ws/counter`)
 * `SCAN_STARTED`: Dispatched within <0.5s of file upload.
 * `AUDIT_COMPLETE`: Dispatched within <3.5s with itemized discrepancies and audio URL.
-* `PAYOUT_APPROVED`: Dispatched upon pressing the Paytm Button.
+* Resolve is REST-only in the current integration. `PAYOUT_APPROVED` remains in the CIS type contract but is not emitted until the frontend's duplicate-apply path is coordinated.
 
 ### Immutable Financial Rules
 * **Zero LLM Math:** All calculations done using Python `decimal.Decimal`.
@@ -127,13 +128,13 @@ docker compose up --build -d --no-deps frontend
 * **7-Day Credit Velocity Cap:**
   `Daily Cap = 30-Day Avg Daily QR Volume * 0.35`
   `Max Credit Limit = Daily Cap * 7`
-* **Mandi-Pulse Guardrail:** Activates only when >= 5 distinct stores have purchased the canonical SKU in that pin code over the last 14 days.
+* **Mandi-Pulse Guardrail:** Uses the median of eligible invoice-history rates and activates only when >= 5 distinct stores have purchased the canonical SKU in that pin code over the last 14 days.
 
 ---
 
 ## 6. Pitch Day Troubleshooting & Safeguards
 
 1. **Browser Audio Autoplay Block:** Modern browsers restrict audio autoplay until the user interacts with the page. If the audio doesn't automatically speak on `/counter`, click the pulsing **"🔊 Tap to hear the audit"** button that appears on the Soundbox twin.
-2. **Fail-Safe "Load Demo Bill" Button:** If mobile network latency spikes or lighting ruins camera capture during the pitch, click the blue **"Load Demo Bill"** button directly on `/counter`. It triggers the full audit flow instantly using the golden fixture.
+2. **Fail-Safe "Load Sample" Button:** If mobile network latency spikes or lighting ruins camera capture during the pitch, click **"Load Sample"** on `/counter`. It returns the CIS golden fixture via REST; it does not broadcast WebSocket events or write an invoice.
 3. **Resetting Between Judges / Demos:** Click the **"Reset demo"** button on the top-right topbar of `/counter` to instantly return the Soundbox twin to its idle state.
 

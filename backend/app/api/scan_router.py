@@ -1,11 +1,4 @@
-"""POST /api/parcha/scan — CIS §4 (Module 2 slices 1–2).
-
-multipart/form-data with `file` (image/jpeg | image/png | application/pdf)
-and `merchant_id`. Validates, resolves the merchant (B1 chain), runs the
-pipeline seam, returns the AuditedInvoiceResponse. In this slice the seam
-is the FixturePipeline — the golden fixture shaped as the real payload,
-zero DB writes (plan §3 note).
-"""
+"""POST /api/parcha/scan — CIS §4 ingress and scan-only WS lifecycle."""
 
 import logging
 from datetime import datetime, timezone
@@ -38,41 +31,44 @@ async def scan_parcha(
         image_bytes = await file.read()
     finally:
         await file.close()
-    if len(image_bytes) == 0:
+    if not image_bytes:
         raise HTTPException(status_code=422, detail="empty file")
     if len(image_bytes) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="file exceeds 20 MB limit")
 
-    # Broadcast before any DB/pipeline work, matching CIS §4's immediate
-    # SCAN_STARTED event. Only uploaded scans take this path; load-sample is
-    # deliberately REST-only (locked B2 decision).
-    session_id = f"sess_{uuid4().hex[:8]}"
-    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    # Event 1 precedes DB and pipeline work; load-sample is deliberately REST-only.
     started = ScanStartedData(
-        session_id=session_id,
-        timestamp=timestamp,
+        session_id=f"sess_{uuid4().hex[:8]}",
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         status="PROCESSING_IMAGE",
         message="Auditing supplier parcha via Gemini 2.5 Flash...",
     )
     await request.app.state.ws_manager.broadcast("SCAN_STARTED", started.model_dump(mode="json"))
 
-    client = await get_client()
     try:
-        merchant = await merchant_resolver.resolve_merchant(client, get_settings().demo_merchant_id, merchant_id)
+        client = await get_client()
+        merchant = await merchant_resolver.resolve_merchant(
+            client, get_settings().demo_merchant_id, merchant_id
+        )
     except RuntimeError as exc:
         logger.error("merchant resolution failed: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
-        pipeline = get_pipeline()
-        audited = await pipeline.extract_and_audit(image_bytes, file.content_type or "", merchant)
+        audited = await get_pipeline().extract_and_audit(
+            image_bytes, file.content_type or "", merchant
+        )
+    except ValueError as exc:
+        logger.info("scan rejected after deterministic validation: %s", exc)
+        raise HTTPException(status_code=422, detail="invoice data failed validation") from exc
+    except RuntimeError as exc:
+        logger.error("vision or scan service unavailable: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="scan pipeline service unavailable") from exc
     except Exception as exc:
-        logger.error("scan pipeline failed: %s", exc)
+        logger.exception("scan pipeline failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="scan pipeline failed") from exc
 
-    # The REST response intentionally has supplier_gstin/invoice_date; CIS
-    # Event 2 is narrower and omits both. Re-validate/exclude to keep the WS
-    # payload exact instead of broadcasting REST-only fields.
+    # Event 2 is narrower than REST: omit supplier_gstin/invoice_date per CIS §4.
     event_data = AuditCompleteData.model_validate(
         audited.model_dump(exclude={"supplier_gstin", "invoice_date"})
     )

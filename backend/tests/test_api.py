@@ -7,6 +7,12 @@ from fastapi.testclient import TestClient
 class ApiWiringTests(unittest.TestCase):
     def test_module_four_compatible_routes_are_registered(self):
         paths = {route.path for route in app.routes}
+        self.assertIn("/api/parcha/scan", paths)
+        self.assertIn("/api/parcha/{invoice_id}/resolve", paths)
+        self.assertIn("/api/parcha/{invoice_id}/export", paths)
+        self.assertIn("/api/demo/load-sample", paths)
+        self.assertIn("/ws/counter", paths)
+        self.assertIn("/static", paths)
         self.assertIn("/api/parcha/{invoice_id}/validate", paths)
         self.assertIn("/api/parcha/{invoice_id}/alerts", paths)
         self.assertIn("/api/parcha/{invoice_id}/price-analysis", paths)
