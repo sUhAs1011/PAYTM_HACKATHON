@@ -11,6 +11,9 @@ services:
     volumes:
       - ./backend/static/crops:/app/static/crops
       - ./backend/static/audio:/app/static/audio
+      # CIS golden fixture: mounted read-only because the backend build
+      # context excludes the repo root (same pattern as the frontend mount).
+      - ./contracts:/contracts:ro
     expose:
       - "8000"
     healthcheck:

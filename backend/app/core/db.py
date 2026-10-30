@@ -31,6 +31,17 @@ async def get_client() -> AsyncClient:
     return _client
 
 
+def reset_client() -> None:
+    """Drop the cached client so the next get_client() creates a fresh one.
+
+    The client binds to the event loop it was created on. In the deployed
+    app there is exactly one loop, so this is never needed — it exists for
+    test contexts that mix `asyncio.run()` with Starlette's TestClient
+    (whose portal runs its own loop)."""
+    global _client
+    _client = None
+
+
 async def _create_client() -> AsyncClient:
     url = os.environ.get("SUPABASE_URL", "").strip()
     key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
