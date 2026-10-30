@@ -1,0 +1,13 @@
+.git
+.env
+**/.env
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/dist
+**/.angular
+backend/static/crops/*
+backend/static/audio/*
+!backend/static/crops/.gitkeep
+!backend/static/audio/.gitkeep

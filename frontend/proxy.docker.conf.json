@@ -1,0 +1,18 @@
+{
+  "/api": {
+    "target": "http://api:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/static": {
+    "target": "http://api:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/ws": {
+    "target": "ws://api:8000",
+    "secure": false,
+    "ws": true,
+    "changeOrigin": true
+  }
+}

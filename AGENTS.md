@@ -69,14 +69,18 @@ Lending cap is 35% of the merchant's 30-day average daily QR volume. Mandi-Pulse
 
 ## Commands
 
-No app is scaffolded, so the documented `docker compose up --build` command is not runnable yet. There is no install, lint, or test command yet. When these exist, put the exact commands here.
+Scaffold only. Do not run `npm install` or `pip install` unless the user asks.
+
+- `docker compose up --build` is the intended local start command. It will not become healthy until an Angular workspace and `app.main:app` exist. `app.main` is a scaffold assumption, not a CIS path.
+- No lint or test command yet.
 
 ## Progress
 
-- 2026-10-30: Source docs are in `documents/`. `README.md` is a title only. No application code, contracts package, or migrations are in the repo.
+- 2026-10-30: Source docs are in `documents/`. `README.md` is a title only. Application modules are empty placeholders, not implementations.
 - 2026-10-30: Supabase org and project exist. The user was given a SQL Editor script for the seven tables, foreign keys, and HNSW index, plus a follow-up to enable RLS with no policies. Execution is not confirmed in this repo. Do not re-run DDL or drop tables unless the user asks.
 - 2026-10-30: Demo seed was intentionally not applied. The seed in the engineering document attaches five Fortune Oil rows to one merchant invoice, which does not satisfy Mandi-Pulse.
-- 2026-10-30: ED now specifies a Docker Compose frontend/API stack, external managed integrations, secure runtime secrets, static-asset persistence, and Docker-aware proxy routing. No Docker files or application code have been created yet.
+- 2026-10-30: ED now specifies a Docker Compose frontend/API stack, external managed integrations, secure runtime secrets, static-asset persistence, and Docker-aware proxy routing.
+- 2026-10-30: Repo scaffold exists: empty ED source files, empty SQL migrations, CIS `contracts/demo_bill_fixture.json`, `frontend/package.json` (Angular 19.2.15), `backend/requirements.txt`, Dockerfiles, ignore files, proxy configs, `compose.yaml`, and `.env.example`. No application logic and no DDL. `.gitkeep` files hold empty directories. `.gitignore` excludes `.env` and dependency folders. Env names in `.env.example` are placeholders, not a config contract.
 
 ## Do not silently fix
 

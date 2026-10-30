@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+.git
+.env
+*.md
+static/crops/*
+static/audio/*
+!static/crops/.gitkeep
+!static/audio/.gitkeep
