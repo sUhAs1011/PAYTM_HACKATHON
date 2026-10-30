@@ -11,6 +11,7 @@ services:
     volumes:
       - ./backend/static/crops:/app/static/crops
       - ./backend/static/audio:/app/static/audio
+      - ./contracts:/app/contracts:ro
     expose:
       - "8000"
     healthcheck:
