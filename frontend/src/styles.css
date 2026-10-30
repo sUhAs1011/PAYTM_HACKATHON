@@ -1,0 +1,81 @@
+/* ParchaPay AI — global styles (Module 1: Dual-Surface Client) */
+
+:root {
+  /* Brand */
+  --pp-navy: #002970;
+  --pp-navy-deep: #001a45;
+  --pp-blue: #00baf2;
+  --pp-blue-soft: #38d0ff;
+
+  /* Surfaces (dark projector theme) */
+  --pp-bg: #0a1020;
+  --pp-panel: #131c31;
+  --pp-panel-2: #1a2540;
+  --pp-line: #2a3854;
+
+  /* Text */
+  --pp-text: #eaf0fb;
+  --pp-text-dim: #93a3c4;
+  --pp-text-faint: #64748b;
+
+  /* Audit semantics */
+  --pp-red: #ff5d5d;
+  --pp-red-bg: rgba(255, 93, 93, 0.12);
+  --pp-yellow: #ffcc47;
+  --pp-yellow-bg: rgba(255, 204, 71, 0.14);
+  --pp-green: #2fd07a;
+  --pp-green-bg: rgba(47, 208, 122, 0.12);
+
+  /* Misc */
+  --pp-radius: 14px;
+  --pp-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --pp-font: 'Segoe UI', 'Inter', system-ui, -apple-system, Roboto, 'Helvetica Neue', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--pp-font);
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgba(0, 186, 242, 0.14), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(0, 41, 112, 0.55), transparent 55%),
+    var(--pp-bg);
+  color: var(--pp-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Shared card surface */
+.pp-card {
+  background: linear-gradient(180deg, var(--pp-panel-2), var(--pp-panel));
+  border: 1px solid var(--pp-line);
+  border-radius: var(--pp-radius);
+  box-shadow: var(--pp-shadow);
+}
+
+/* Small uppercase section label */
+.pp-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--pp-text-dim);
+}

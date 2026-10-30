@@ -25,6 +25,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    volumes:
+      # Read-only shared contract definitions (CIS): mounted at /contracts so
+      # the tsconfig "@contracts/*" paths ("../contracts/..." relative to
+      # frontend/) resolve inside the container exactly as they do for
+      # host-mode `ng serve`. Compose paths are relative to this compose file.
+      - ./contracts:/contracts:ro
     ports:
       - "4200:4200"
     depends_on:
