@@ -636,9 +636,16 @@ export class CounterComponent implements OnDestroy {
     }
     this.busy.set(true);
     this.stage.set('PROCESSING');
-    this.processingMessage.set('Auditing supplier parcha via Gemini 3.6 Flash…');
+    this.processingMessage.set('Extracting supplier bill via Gemini 3.6 Flash…');
     try {
-      const audit = await this.api.scan(file);
+      // Laptop upload auto-confirms the parse (no corrections) so the
+      // deterministic audit + AUDIT_COMPLETE run immediately; the phone
+      // /scan route carries the human review-and-correct step.
+      const draft = await this.api.scan(file);
+      const audit = await this.api.confirmReview(draft.invoice_id, {
+        merchant_id: draft.merchant_id,
+        corrections: [],
+      });
       this.applyAudit(audit);
     } catch (err) {
       console.error('[counter] Bill scan failed', err);

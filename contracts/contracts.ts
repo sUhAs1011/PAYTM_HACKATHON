@@ -151,3 +151,80 @@ export interface LoadSampleRequest {
 }
 
 export type ExportFormat = 'tally' | 'marg';
+
+// ---------------------------------------------------------------------------
+// Human-in-the-loop review layer (Module 3 extension) — mirrors contracts.py
+// ---------------------------------------------------------------------------
+
+/** Response of POST /api/parcha/scan — the raw Gemini parse persisted as a draft. */
+export interface ScanDraftResponse {
+  invoice_id: string;
+  merchant_id: string;
+  /** 'user_pending_review' until confirm flips it to 'bill_verified' */
+  status: string;
+  supplier_name: string;
+  supplier_gstin: string;
+  invoice_number: string;
+  invoice_date: string;
+  billed_total: number;
+  item_count: number;
+  dispute_crop_url: string;
+  message: string;
+}
+
+export interface DraftLineItem {
+  id: string;
+  raw_item_name: string;
+  printed_qty: number;
+  billed_qty: number;
+  free_qty: number;
+  billed_rate: number;
+  tax_percent: number;
+  true_landed_cost: number;
+  mrp: number | null;
+  ocr_confidence: number;
+  has_pen_markup: boolean;
+  bounding_box: number[] | null;
+  canonical_sku_id: string | null;
+}
+
+/** GET /api/parcha/{id}/review — one draft's parsed header + editable items. */
+export interface InvoiceDraftReview {
+  invoice_id: string;
+  merchant_id: string;
+  supplier_id: string | null;
+  supplier_name: string;
+  supplier_gstin: string;
+  invoice_number: string;
+  invoice_date: string;
+  billed_total: number;
+  status: string;
+  dispute_crop_url: string;
+  items: DraftLineItem[];
+}
+
+export interface PendingReviewListResponse {
+  merchant_id: string;
+  drafts: InvoiceDraftReview[];
+}
+
+/** Partial update to one persisted line item, addressed by its row id. */
+export interface LineItemCorrection {
+  id: string;
+  raw_item_name?: string;
+  printed_qty?: number;
+  billed_qty?: number;
+  free_qty?: number;
+  billed_rate?: number;
+  tax_percent?: number;
+  mrp?: number;
+}
+
+/** POST /api/parcha/{id}/confirm body — merchant scope + corrected fields. */
+export interface ConfirmCorrectionsRequest {
+  merchant_id: string;
+  invoice_number?: string;
+  invoice_date?: string;
+  billed_total?: number;
+  corrections?: LineItemCorrection[];
+}
