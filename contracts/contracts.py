@@ -93,6 +93,80 @@ class AuditedInvoiceResponse(AuditCompleteData):
     invoice_date: str
 
 
+# Human-in-the-loop review layer (Module 3 extension): scan persists the raw
+# Gemini parse as a draft (invoices.status = 'user_pending_review'), the UI
+# reviews/edits it, and the confirm POST runs the deterministic audit and
+# flips status to 'bill_verified'. AUDIT_COMPLETE only fires after confirm.
+class ScanDraftResponse(BaseModel):
+    invoice_id: str
+    merchant_id: str
+    status: str
+    supplier_name: str
+    supplier_gstin: str
+    invoice_number: str
+    invoice_date: str
+    billed_total: float
+    item_count: int
+    dispute_crop_url: str
+    message: str = "Bill parsed - review the extracted items before confirming."
+
+
+class DraftLineItem(BaseModel):
+    id: str
+    raw_item_name: str
+    printed_qty: int
+    billed_qty: int
+    free_qty: int
+    billed_rate: float
+    tax_percent: float
+    true_landed_cost: float
+    mrp: Optional[float] = None
+    ocr_confidence: float
+    has_pen_markup: bool
+    bounding_box: Optional[List[int]] = None
+    canonical_sku_id: Optional[str] = None
+
+
+class InvoiceDraftReview(BaseModel):
+    invoice_id: str
+    merchant_id: str
+    supplier_id: Optional[str] = None
+    supplier_name: str
+    supplier_gstin: str
+    invoice_number: str
+    invoice_date: str
+    billed_total: float
+    status: str
+    dispute_crop_url: str
+    items: List[DraftLineItem]
+
+
+class PendingReviewListResponse(BaseModel):
+    merchant_id: str
+    drafts: List[InvoiceDraftReview]
+
+
+class LineItemCorrection(BaseModel):
+    """Partial update to one persisted invoice_line_items row, addressed by id."""
+
+    id: str
+    raw_item_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    printed_qty: Optional[int] = Field(default=None, ge=0)
+    billed_qty: Optional[int] = Field(default=None, ge=0)
+    free_qty: Optional[int] = Field(default=None, ge=0)
+    billed_rate: Optional[float] = Field(default=None, ge=0)
+    tax_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    mrp: Optional[float] = Field(default=None, ge=0)
+
+
+class ConfirmCorrectionsRequest(BaseModel):
+    merchant_id: str
+    invoice_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    invoice_date: Optional[str] = Field(default=None, min_length=1)
+    billed_total: Optional[float] = Field(default=None, ge=0)
+    corrections: List[LineItemCorrection] = Field(default_factory=list)
+
+
 class ScanStartedData(BaseModel):
     session_id: str
     timestamp: str
@@ -149,14 +223,20 @@ __all__ = [
     "AuditedInvoiceResponse",
     "AuditedItem",
     "BoundingBox2D",
+    "ConfirmCorrectionsRequest",
+    "DraftLineItem",
     "ExtractedLineItem",
     "GstImsShield",
+    "InvoiceDraftReview",
+    "LineItemCorrection",
     "LoadSampleRequest",
+    "PendingReviewListResponse",
     "LoanSchedule",
     "PayoutApprovedData",
     "RawExtractedInvoice",
     "ResolveActionResponse",
     "ResolveRequest",
+    "ScanDraftResponse",
     "ScanStartedData",
     "SplitCreditPreApproval",
     "WhatsappClaim",

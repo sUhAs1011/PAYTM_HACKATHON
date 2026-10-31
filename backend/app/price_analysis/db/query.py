@@ -83,6 +83,7 @@ async def get_supplier_history(
         .select("id,invoice_date")
         .eq("merchant_id", merchant_id)
         .eq("supplier_id", supplier_id)
+        .neq("status", "user_pending_review")
         .neq("id", invoice["id"])
     )
     if invoice.get("invoice_date"):
@@ -164,6 +165,7 @@ async def get_pincode_peer_rates(
         await client.table("invoices")
         .select("id,merchant_id")
         .in_("merchant_id", merchant_ids)
+        .neq("status", "user_pending_review")
         # start_date is the exclusive boundary so the inclusive end date spans
         # exactly 14 calendar dates, not 15.
         .gt("invoice_date", start_date.isoformat())

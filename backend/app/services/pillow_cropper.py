@@ -44,6 +44,7 @@ def crop_pen_markup(
         ymax_px = (box.ymax / 1000.0) * height
         xmax_px = (box.xmax / 1000.0) * width
 
+        #second source of problem
         box_w = max(10.0, xmax_px - xmin_px)
         box_h = max(10.0, ymax_px - ymin_px)
         cx = (xmin_px + xmax_px) / 2.0
@@ -65,6 +66,7 @@ def crop_pen_markup(
         draw = ImageDraw.Draw(cropped)
 
         # Draw AI highlight bounding box around the exact edit
+        # Needs more optimization
         rel_x1 = max(4, int(xmin_px - x1 - 6))
         rel_y1 = max(4, int(ymin_px - y1 - 6))
         rel_x2 = min(cropped.width - 4, int(xmax_px - x1 + 6))

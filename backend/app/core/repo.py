@@ -16,6 +16,10 @@ from typing import Optional
 # Postgres-side defaults (gen_random_uuid()); we rely on returning
 # representation to read them back, which supabase-py does by default.
 INVOICE_STATUS_DISPUTED = "DISPUTED_PENDING_IMS"
+# Human-in-the-loop review layer (Module 3): drafts await the merchant's
+# correction pass before the deterministic audit marks them verified.
+INVOICE_STATUS_USER_PENDING_REVIEW = "user_pending_review"
+INVOICE_STATUS_BILL_VERIFIED = "bill_verified"
 
 
 async def get_merchant(client, merchant_id: str) -> Optional[dict]:
@@ -58,22 +62,40 @@ async def first_merchant_with_invoice(client) -> Optional[dict]:
     return None
 
 
-async def get_invoice_bundle(client, invoice_id: str) -> Optional[dict]:
+async def get_invoice_bundle(
+    client,
+    invoice_id: str,
+    merchant_id: Optional[str] = None,
+) -> Optional[dict]:
     """Invoice + its supplier + its line items in one round trip.
 
     Shape: {..invoice columns.., suppliers: {...}|None, invoice_line_items: [..]}
     Line-item math is ALWAYS derived from invoice_line_items — the stored
     invoices.billed_total includes non-itemized charges (documented tension;
     see AGENTS.md). """
+    query = (
+        client.table("invoices")
+        .select("*, suppliers(name, gstin, phone), invoice_line_items(*)")
+        .eq("id", invoice_id)
+    )
+    if merchant_id:
+        query = query.eq("merchant_id", merchant_id)
+    response = await query.limit(1).execute()
+    rows = response.data or []
+    return rows[0] if rows else None
+
+
+async def get_pending_reviews(client, merchant_id: str) -> list[dict]:
+    """All user_pending_review drafts for one merchant, items + supplier embedded."""
     response = (
         await client.table("invoices")
         .select("*, suppliers(name, gstin, phone), invoice_line_items(*)")
-        .eq("id", invoice_id)
-        .limit(1)
+        .eq("merchant_id", merchant_id)
+        .eq("status", INVOICE_STATUS_USER_PENDING_REVIEW)
+        .order("created_at", desc=True)
         .execute()
     )
-    rows = response.data or []
-    return rows[0] if rows else None
+    return response.data or []
 
 
 async def get_loan_for_invoice(client, invoice_id: str) -> Optional[dict]:
@@ -125,6 +147,18 @@ async def insert_ims_record(client, payload: dict) -> dict:
 
 async def update_invoice_status(client, invoice_id: str, status: str) -> None:
     await client.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
+
+
+async def update_invoice(client, invoice_id: str, payload: dict) -> None:
+    """General invoice update — used by the confirm-review flow to write
+    corrected totals, status, and header fields in one call."""
+    await client.table("invoices").update(payload).eq("id", invoice_id).execute()
+
+
+async def update_invoice_line_item(client, item_id: str, payload: dict) -> None:
+    """Apply merchant corrections plus recomputed audit fields to one
+    persisted invoice_line_items row."""
+    await client.table("invoice_line_items").update(payload).eq("id", item_id).execute()
 
 
 async def delete_invoice(client, invoice_id: str) -> None:
