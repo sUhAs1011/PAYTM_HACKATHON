@@ -1,7 +1,7 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { Subscription } from 'rxjs';
 
-import { AuditCompleteData, PayoutApprovedData } from '@contracts/contracts';
+import { AuditCompleteData, ExportFormat, PayoutApprovedData } from '@contracts/contracts';
 
 import { AuditTableComponent } from '../../components/audit-table/audit-table.component';
 import { SoundboxTwinComponent } from '../../components/soundbox-twin/soundbox-twin.component';
@@ -73,6 +73,38 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
                     : 'Alert text'
               }}
             </button>
+            <div class="export-menu">
+              @if (audit()?.invoice_id === demoFixtureInvoiceId) {
+                <button
+                  class="btn-ghost export-trigger"
+                  type="button"
+                  disabled
+                  title="The sample fixture is not saved in Supabase; export a real scan."
+                >
+                  Export
+                </button>
+              } @else {
+                <button
+                  class="btn-ghost export-trigger"
+                  type="button"
+                  [attr.aria-expanded]="exportMenuOpen()"
+                  aria-controls="invoice-export-options"
+                  (click)="toggleExportMenu()"
+                >
+                  Export <span aria-hidden="true">▾</span>
+                </button>
+                @if (exportMenuOpen()) {
+                  <div id="invoice-export-options" class="export-options" role="group" aria-label="Export format">
+                    <button type="button" (click)="downloadExport('tally')" [disabled]="busy()">
+                      XML (Tally)
+                    </button>
+                    <button type="button" (click)="downloadExport('marg')" [disabled]="busy()">
+                      CSV (Marg)
+                    </button>
+                  </div>
+                }
+              }
+            </div>
           }
           @if (stage() !== 'IDLE') {
             <button class="btn-ghost" (click)="reset()">Reset</button>
@@ -318,6 +350,46 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
     .transcript-toggle {
       color: var(--pp-text);
       border-color: rgba(0, 186, 242, 0.45);
+    }
+    .export-menu {
+      position: relative;
+    }
+    .export-trigger {
+      color: var(--pp-text);
+    }
+    .export-trigger:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .export-options {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      z-index: 20;
+      display: grid;
+      min-width: 148px;
+      padding: 6px;
+      border: 1px solid var(--pp-line);
+      border-radius: 12px;
+      background: #0b1b2b;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+    .export-options button {
+      padding: 10px 12px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--pp-text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .export-options button:hover:not(:disabled) {
+      background: rgba(0, 186, 242, 0.12);
+    }
+    .export-options button:disabled {
+      cursor: wait;
+      opacity: 0.6;
     }
     .voice-transcript-panel {
       margin: -8px 0 20px;
@@ -648,6 +720,7 @@ export class CounterComponent implements OnDestroy {
   readonly ws = inject(WebsocketService);
 
   protected readonly inr = formatINR;
+  protected readonly demoFixtureInvoiceId = DEMO_FIXTURE_INVOICE_ID;
 
   readonly stage = signal<CounterStage>('IDLE');
   readonly processingMessage = signal('Auditing supplier parcha via Gemini 3.6 Flash…');
@@ -656,6 +729,7 @@ export class CounterComponent implements OnDestroy {
   readonly whatsappOpen = signal(false);
   readonly splitDrawerOpen = signal(false);
   readonly busy = signal(false);
+  readonly exportMenuOpen = signal(false);
   readonly showVoiceTranscript = signal(false);
   readonly transcriptUsesIndicScript = computed(() =>
     /[\u0600-\u06ff\u0900-\u0dff]/u.test(this.audit()?.voice_transcript ?? ''),
@@ -755,10 +829,33 @@ export class CounterComponent implements OnDestroy {
     this.showVoiceTranscript.update((visible) => !visible);
   }
 
+  toggleExportMenu(): void {
+    this.exportMenuOpen.update((open) => !open);
+  }
+
+  async downloadExport(format: ExportFormat): Promise<void> {
+    const invoiceId = this.audit()?.invoice_id;
+    if (!invoiceId || invoiceId === DEMO_FIXTURE_INVOICE_ID || this.busy()) {
+      return;
+    }
+
+    this.busy.set(true);
+    try {
+      await this.api.downloadExport(invoiceId, format);
+    } catch (err) {
+      console.error('[counter] invoice export failed', err);
+      alert(err instanceof Error ? err.message : 'Invoice export failed');
+    } finally {
+      this.exportMenuOpen.set(false);
+      this.busy.set(false);
+    }
+  }
+
   reset(): void {
     this.stage.set('IDLE');
     this.audit.set(null);
     this.showVoiceTranscript.set(false);
+    this.exportMenuOpen.set(false);
     this.payout.set(null);
     this.whatsappOpen.set(false);
     this.splitDrawerOpen.set(false);
@@ -777,6 +874,7 @@ export class CounterComponent implements OnDestroy {
     }
     this.audit.set(audit);
     this.showVoiceTranscript.set(false);
+    this.exportMenuOpen.set(false);
     this.payout.set(null);
     this.whatsappOpen.set(false);
     this.splitDrawerOpen.set(false);
