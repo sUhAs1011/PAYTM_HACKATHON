@@ -112,7 +112,7 @@ type TwinView = 'IDLE' | 'PROCESSING' | 'ALERT' | 'APPROVED';
                     <div class="laser-scanner" aria-hidden="true"></div>
                     <div class="audit-spinner"></div>
                     <h3 class="processing-head">Auditing Parcha&hellip;</h3>
-                    <p class="processing-sub">Gemini 2.5 Flash &middot; Decimal Engine &middot; Mandi-Pulse</p>
+                    <p class="processing-sub">Gemini 3.6 Flash &middot; Decimal Engine &middot; Mandi-Pulse</p>
                   </div>
                 }
                 @case ('ALERT') {

@@ -13,6 +13,8 @@ import { formatINR } from '../../shared/format';
 
 export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
 
+const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
+
 /**
  * Countertop projector dashboard (`/counter`) — PRD F4/F5/F6 orchestration.
  *
@@ -58,8 +60,12 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
           @if (stage() !== 'IDLE') {
             <button class="btn-ghost" (click)="reset()">Reset</button>
           }
-          <button class="btn-primary" (click)="laptopFileInput.click()" [disabled]="busy()">
-            &#128247; Upload Bill
+          <button class="btn-primary upload-action" (click)="laptopFileInput.click()" [disabled]="busy()">
+            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M14 4h-4L8.5 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.5L14 4Z" />
+              <circle cx="12" cy="13" r="3.25" />
+            </svg>
+            <span>Upload Bill</span>
           </button>
           <button class="btn-ghost" (click)="loadDemoBill()" [disabled]="busy()">
             Load Sample
@@ -71,17 +77,26 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
         @case ('IDLE') {
           <section class="idle-wrap">
             <div class="pp-card idle-card">
-              <div class="idle-icon">&#128247;</div>
+              <div class="idle-icon">
+                <svg class="upload-icon upload-icon-large" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M14 4h-4L8.5 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.5L14 4Z" />
+                  <circle cx="12" cy="13" r="3.25" />
+                </svg>
+              </div>
               <h2>Awaiting supplier parcha&hellip;</h2>
               <p>
                 Snap a photo on the shopkeeper&rsquo;s phone at <code>/scan</code>, or select an
                 invoice photo directly from your laptop.
               </p>
-              <div style="display: flex; gap: 12px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
-                <button class="btn-primary big" (click)="laptopFileInput.click()" [disabled]="busy()">
-                  &#128247; Upload Bill Photo
+              <div class="idle-actions">
+                <button class="btn-primary idle-action upload-action" (click)="laptopFileInput.click()" [disabled]="busy()">
+                  <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <path d="M14 4h-4L8.5 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.5L14 4Z" />
+                    <circle cx="12" cy="13" r="3.25" />
+                  </svg>
+                  <span>Upload Bill Photo</span>
                 </button>
-                <button class="btn-ghost" (click)="loadDemoBill()" [disabled]="busy()">
+                <button class="btn-ghost idle-action" (click)="loadDemoBill()" [disabled]="busy()">
                   Load Sample Fixture
                 </button>
               </div>
@@ -153,7 +168,7 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
 
                 <app-audit-table [items]="a.items" />
 
-                @if (hasPenEdit()) {
+                @if (showDisputeCrop()) {
                   <div class="pp-card crop">
                     <div class="crop-head">
                       <span class="pp-label">Pen edit &middot; dispute crop</span>
@@ -317,9 +332,23 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
     .btn-primary:hover {
       filter: brightness(1.08);
     }
-    .btn-primary.big {
-      padding: 15px 26px;
-      font-size: 15px;
+    .upload-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .upload-icon {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+      vertical-align: middle;
+    }
+    .upload-icon-large {
+      width: 40px;
+      height: 40px;
+      color: var(--pp-blue-soft);
     }
 
     .idle-wrap,
@@ -333,8 +362,25 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
       padding: 44px 42px;
       text-align: center;
     }
+    .idle-actions {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    .idle-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 260px;
+      max-width: 100%;
+      height: 64px;
+      padding: 14px 18px;
+      font-size: 15px;
+      white-space: nowrap;
+    }
     .idle-icon {
-      font-size: 40px;
       margin-bottom: 10px;
     }
     .idle-card h2 {
@@ -547,17 +593,20 @@ export class CounterComponent implements OnDestroy {
   protected readonly inr = formatINR;
 
   readonly stage = signal<CounterStage>('IDLE');
-  readonly processingMessage = signal('Auditing supplier parcha via Gemini 2.5 Flash…');
+  readonly processingMessage = signal('Auditing supplier parcha via Gemini 3.6 Flash…');
   readonly audit = signal<AuditCompleteData | null>(null);
   readonly payout = signal<PayoutApprovedData | null>(null);
   readonly whatsappOpen = signal(false);
   readonly splitDrawerOpen = signal(false);
   readonly busy = signal(false);
 
-  readonly hasPenEdit = computed(() => !!this.audit()?.items.some((i) => i.has_pen_markup));
+  readonly showDisputeCrop = computed(() => {
+    const audit = this.audit();
+    return !!audit && audit.invoice_id !== DEMO_FIXTURE_INVOICE_ID && audit.items.some((i) => i.has_pen_markup);
+  });
   readonly cropSrc = computed(() => {
     const a = this.audit();
-    return a ? this.api.assetUrl(a.dispute_crop_url) : '';
+    return a && a.invoice_id !== DEMO_FIXTURE_INVOICE_ID ? this.api.assetUrl(a.dispute_crop_url) : '';
   });
   readonly splitPreApproval = computed(() => this.audit()?.split_credit_pre_approval ?? null);
 
@@ -586,7 +635,7 @@ export class CounterComponent implements OnDestroy {
     }
     this.busy.set(true);
     this.stage.set('PROCESSING');
-    this.processingMessage.set('Auditing supplier parcha via Gemini 2.5 Flash…');
+    this.processingMessage.set('Loading sample fixture…');
     try {
       const audit = await this.api.scan(file);
       this.applyAudit(audit);
@@ -605,7 +654,7 @@ export class CounterComponent implements OnDestroy {
     }
     this.busy.set(true);
     this.stage.set('PROCESSING');
-    this.processingMessage.set('Auditing supplier parcha via Gemini 2.5 Flash…');
+    this.processingMessage.set('Auditing supplier parcha via Gemini 3.6 Flash…');
     try {
       const audit = await this.api.loadSample();
       // Demo mode: the mock WS injection already drove the state machine; in

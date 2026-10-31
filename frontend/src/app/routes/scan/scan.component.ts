@@ -71,7 +71,7 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
             }
             <h2>Auditing parcha&hellip;</h2>
             <ul class="pipeline">
-              <li>Gemini 2.5 Flash extraction</li>
+              <li>Gemini 3.6 Flash extraction</li>
               <li>Decimal math &amp; checksum verification</li>
               <li>Mandi-Pulse pin-code comparison</li>
             </ul>

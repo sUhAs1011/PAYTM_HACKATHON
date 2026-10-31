@@ -9,6 +9,7 @@ import logging
 import uuid
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Dict
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -41,7 +42,7 @@ async def scan_parcha(
     file: UploadFile = File(...),
     merchant_id: str = Form("a0000000-0000-0000-0000-000000000001"),
 ):
-    """Ingests bill image, notifies WebSocket immediately, runs Gemini 3.8 Flash,
+    """Ingests bill image, notifies WebSocket immediately, runs Gemini 3.6 Flash,
 
     crops pen edits with Pillow, computes True Landed Cost, and broadcasts audit.
     """
@@ -55,14 +56,14 @@ async def scan_parcha(
             "session_id": session_id,
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "status": "PROCESSING_IMAGE",
-            "message": "Auditing supplier parcha via Gemini 3.8 Flash...",
+            "message": "Auditing supplier parcha via Gemini 3.6 Flash...",
         },
     )
 
     image_bytes = await file.read()
     mime_type = file.content_type or "image/jpeg"
 
-    # Step 2: Real Gemini 3.8 Flash Multimodal Vision Extraction
+    # Step 2: Real Gemini 3.6 Flash Multimodal Vision Extraction
     try:
         raw_invoice = extract_invoice_from_image(image_bytes, mime_type=mime_type)
     except Exception as exc:
@@ -248,66 +249,14 @@ async def scan_parcha(
 
 @router.post("/demo/load-sample", response_model=AuditedInvoiceResponse)
 async def load_sample(req: LoadSampleRequest):
-    """Demo sample trigger using the golden fixture."""
-    fixture_response = AuditedInvoiceResponse(
-        invoice_id="demo-golden-fixture-001",
-        supplier_name="Sharmaji Wholesale Distributors",
-        supplier_gstin="29AABCU9603R1ZM",
-        invoice_number="INV-2026-402",
-        invoice_date="2026-10-30",
-        billed_total=14000.00,
-        approved_total=13860.00,
-        overcharge_amount=140.00,
-        audio_alert_url="/static/audio/demo_alert.wav",
-        dispute_crop_url="/static/crops/demo_pen_edit.jpg",
-        voice_transcript="Sharmaji bill checked. Oil rate up by Rs 6, pen math error of Rs 140. Pay Rs 13,860.",
-        items=[
-            AuditedItem(
-                item_name="Fortune Sunlite Sunflower Oil 1L",
-                billed_qty=10,
-                printed_qty=12,
-                free_qty=0,
-                billed_rate=134.00,
-                tax_percent=5.0,
-                true_landed_cost=140.70,
-                ocr_confidence=0.94,
-                has_pen_markup=True,
-                discrepancy_type="RATE_HIKE_AND_PEN_ERROR",
-                personal_history_rate=128.00,
-                mandi_pulse_median=127.50,
-                mandi_pulse_band="₹126 - ₹129",
-                rate_status="FLAGGED_HIGH",
-            ),
-            AuditedItem(
-                item_name="Parle-G Gold 100g Box (24pkts)",
-                billed_qty=5,
-                printed_qty=5,
-                free_qty=1,
-                unit_rate=240.00,
-                tax_percent=5.0,
-                true_landed_cost=210.00,
-                ocr_confidence=0.76,
-                has_pen_markup=False,
-                discrepancy_type="LOW_CONFIDENCE_REVIEW",
-                personal_history_rate=240.00,
-                mandi_pulse_median=240.00,
-                mandi_pulse_band="₹238 - ₹242",
-                rate_status="OK",
-            ),
-        ],
-        gst_ims_shield=GstImsShield(
-            status="SHIELD_READY",
-            flag_reason="Quantity pen-corrected from 12 to 10; pending debit adjustment",
-            deadline="2026-11-14",
-        ),
-        split_credit_pre_approval=SplitCreditPreApproval(
-            is_eligible=True,
-            max_credit_limit=24500.00,
-            daily_deduction_amount=1980.00,
-            tenure_days=7,
-            daily_velocity_cap=3500.00,
-            autopay_mandate_registered=True,
-        ),
+    """Load the shared fixture directly; this path never invokes Gemini or scan."""
+    fixture_path = Path("/app/contracts/demo_bill_fixture.json")
+    if not fixture_path.is_file():
+        # Host-run fallback for development; Compose mounts the shared file at
+        # /app/contracts so the Docker runtime uses the first path above.
+        fixture_path = Path(__file__).resolve().parents[3] / "contracts" / "demo_bill_fixture.json"
+    fixture_response = AuditedInvoiceResponse.model_validate_json(
+        fixture_path.read_text(encoding="utf-8")
     )
 
     invoices_store[fixture_response.invoice_id] = fixture_response
