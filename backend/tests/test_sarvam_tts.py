@@ -102,8 +102,8 @@ class SarvamTtsTests(unittest.TestCase):
         translation_call = Mock(
             return_value=SimpleNamespace(
                 translated_text=(
-                    "इनवॉइस ZQXNUM000QXZ में अतिरिक्त राशि ZQXNUM001QXZ है। "
-                    "भुगतान ZQXNUM002QXZ करें।"
+                    "इनवॉइस inv-2026-402 में अतिरिक्त राशि ₹140.00 है। "
+                    "भुगतान ₹13860 करें।"
                 )
             )
         )
@@ -118,19 +118,22 @@ class SarvamTtsTests(unittest.TestCase):
 
         self.assertEqual(
             translated,
-            "इनवॉइस INV-2026-402 में अतिरिक्त राशि 140 है। भुगतान 13,860 करें।",
+            "इनवॉइस INV-2026-402 में अतिरिक्त राशि ₹140 है। "
+            "भुगतान ₹13,860 करें।",
         )
         kwargs = translation_call.call_args.kwargs
+        self.assertEqual(kwargs["input"], original)
         self.assertEqual(kwargs["source_language_code"], "en-IN")
         self.assertEqual(kwargs["target_language_code"], "hi-IN")
         self.assertEqual(kwargs["model"], "mayura:v1")
         self.assertEqual(kwargs["mode"], "modern-colloquial")
         self.assertEqual(kwargs["output_script"], "fully-native")
+        self.assertEqual(kwargs["numerals_format"], "international")
         client_factory.assert_called_once_with(
             api_subscription_key="test-secret", timeout=5.0
         )
 
-    def test_translation_returns_none_when_key_or_number_placeholders_are_missing(self):
+    def test_translation_rejects_changed_or_missing_financial_values(self):
         settings = SimpleNamespace(
             sarvam_api_key="",
             translation_source_language="en-IN",
@@ -146,14 +149,43 @@ class SarvamTtsTests(unittest.TestCase):
         settings.sarvam_api_key = "test-secret"
         client = SimpleNamespace(
             text=SimpleNamespace(
-                translate=Mock(return_value=SimpleNamespace(translated_text="भुगतान करें।"))
+                translate=Mock(
+                    return_value=SimpleNamespace(
+                        translated_text="इनवॉइस INV-2026-402 में भुगतान 1000 करें।"
+                    )
+                )
             )
         )
         with (
             patch("app.services.sarvam_tts.get_settings", return_value=settings),
             patch("sarvamai.SarvamAI", return_value=client),
         ):
-            self.assertIsNone(translate_alert("Pay Rs 100."))
+            self.assertIsNone(
+                translate_alert("Invoice INV-2026-402: pay Rs 100.")
+            )
+
+    def test_translation_accepts_equivalent_number_formatting_and_restores_source(self):
+        settings = SimpleNamespace(
+            sarvam_api_key="test-secret",
+            translation_source_language="en-IN",
+            translation_target_language="hi-IN",
+        )
+        client = SimpleNamespace(
+            text=SimpleNamespace(
+                translate=Mock(
+                    return_value=SimpleNamespace(
+                        translated_text="भुगतान 123456 रुपये करें।"
+                    )
+                )
+            )
+        )
+        with (
+            patch("app.services.sarvam_tts.get_settings", return_value=settings),
+            patch("sarvamai.SarvamAI", return_value=client),
+        ):
+            translated = translate_alert("Pay Rs 1,23,456.")
+
+        self.assertEqual(translated, "भुगतान 1,23,456 रुपये करें।")
 
     def test_missing_key_or_provider_error_returns_none(self):
         with tempfile.TemporaryDirectory() as temp_dir:

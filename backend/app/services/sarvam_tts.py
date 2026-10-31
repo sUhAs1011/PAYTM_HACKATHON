@@ -7,6 +7,8 @@ frontend can fall back to browser speech synthesis.
 import base64
 import logging
 import re
+from collections import Counter, defaultdict, deque
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -21,8 +23,10 @@ TRANSLATION_MODE = "modern-colloquial"
 MAX_TRANSLATION_CHARS = 1000
 MAX_TEXT_CHARS = 2500
 REQUEST_TIMEOUT_SECONDS = 5.0
-_PROTECTED_VALUE = re.compile(
-    r"\bINV-[A-Z0-9-]+\b|(?<![A-Z0-9])\d[\d,]*(?:\.\d+)?(?![A-Z0-9])",
+_INVOICE_ID = re.compile(r"\bINV-[A-Z0-9-]+\b", re.IGNORECASE)
+_NUMBER = re.compile(r"(?<![A-Z0-9])\d[\d,]*(?:\.\d+)?(?![A-Z0-9])")
+_FINANCIAL_VALUE = re.compile(
+    rf"{_INVOICE_ID.pattern}|{_NUMBER.pattern}",
     re.IGNORECASE,
 )
 
@@ -30,10 +34,10 @@ _PROTECTED_VALUE = re.compile(
 def translate_alert(transcript: str) -> Optional[str]:
     """Translate the deterministic alert into the configured spoken language.
 
-    Numeric values and invoice identifiers are replaced with checked tokens
-    during translation, then restored byte-for-byte. Translation failure is
-    non-fatal and returns None so callers do not send source-language text to
-    a mismatched TTS language.
+    Translate natural text with Sarvam's international numeral format, then
+    validate and restore the original spelling of every invoice ID and
+    numeric value. Provider output is never trusted to change financial data.
+    Translation failure returns None so callers retain the source transcript.
     """
     settings = get_settings()
     text = (transcript or "").strip()
@@ -46,14 +50,6 @@ def translate_alert(transcript: str) -> Optional[str]:
         logger.info("Sarvam translation skipped reason=missing_api_key")
         return None
 
-    protected_values: list[tuple[str, str]] = []
-
-    def protect(match: re.Match[str]) -> str:
-        token = f"ZQXNUM{len(protected_values):03d}QXZ"
-        protected_values.append((token, match.group(0)))
-        return token
-
-    protected_text = _PROTECTED_VALUE.sub(protect, text)
     try:
         from sarvamai import SarvamAI
 
@@ -62,28 +58,66 @@ def translate_alert(transcript: str) -> Optional[str]:
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         response = client.text.translate(
-            input=protected_text,
+            input=text,
             source_language_code=settings.translation_source_language,
             target_language_code=settings.translation_target_language,
             model=TRANSLATION_MODEL,
             mode=TRANSLATION_MODE,
             output_script="fully-native",
+            numerals_format="international",
         )
         translated = (getattr(response, "translated_text", None) or "").strip()
         if not translated:
             logger.warning("Sarvam translation returned empty text")
             return None
-
-        for token, original_value in protected_values:
-            if translated.count(token) != 1:
-                logger.warning("Sarvam translation rejected reason=numeric_token_mismatch")
-                return None
-            translated = translated.replace(token, original_value)
-        return translated
+        return _validate_and_restore_financial_values(text, translated)
     except Exception as exc:
         # SDK exceptions may contain provider response details; log type only.
         logger.warning("Sarvam translation failed error_type=%s", type(exc).__name__)
         return None
+
+
+def _financial_value_key(value: str) -> tuple[str, object]:
+    """Return a comparison key for an invoice ID or localized numeric token."""
+    if _INVOICE_ID.fullmatch(value):
+        return "invoice_id", value.casefold()
+    try:
+        return "number", Decimal(value.replace(",", ""))
+    except InvalidOperation:
+        # _NUMBER only matches decimal digits and separators; this is a
+        # defensive fallback that still makes an unexpected value fail closed.
+        return "invalid_number", value
+
+
+def _validate_and_restore_financial_values(source: str, translated: str) -> Optional[str]:
+    """Reject changed/added values, and restore equivalent values verbatim.
+
+    Mayura may adjust punctuation/grouping. Comparing parsed numeric values
+    lets us accept harmless formatting changes while restoring the exact
+    source spelling. Invoice IDs must retain the same complete identifier.
+    Only counts/validation outcomes are logged; transcript contents are not.
+    """
+    source_tokens = [match.group(0) for match in _FINANCIAL_VALUE.finditer(source)]
+    translated_tokens = [
+        match.group(0) for match in _FINANCIAL_VALUE.finditer(translated)
+    ]
+    source_counts = Counter(_financial_value_key(token) for token in source_tokens)
+    translated_counts = Counter(
+        _financial_value_key(token) for token in translated_tokens
+    )
+    if source_counts != translated_counts:
+        logger.warning("Sarvam translation rejected reason=financial_value_mismatch")
+        return None
+
+    originals: dict[tuple[str, object], deque[str]] = defaultdict(deque)
+    for token in source_tokens:
+        originals[_financial_value_key(token)].append(token)
+
+    def restore(match: re.Match[str]) -> str:
+        key = _financial_value_key(match.group(0))
+        return originals[key].popleft()
+
+    return _FINANCIAL_VALUE.sub(restore, translated)
 
 
 def synthesize_alert(transcript: str, invoice_id: str) -> Optional[str]:

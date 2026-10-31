@@ -57,6 +57,23 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
               <span class="chip warn">&#9679; Reconnecting&hellip;</span>
             }
           }
+          @if (audit()) {
+            <button
+              class="btn-ghost transcript-toggle"
+              type="button"
+              [attr.aria-expanded]="showVoiceTranscript()"
+              aria-controls="voice-transcript-panel"
+              (click)="toggleVoiceTranscript()"
+            >
+              {{
+                showVoiceTranscript()
+                  ? 'Hide alert text'
+                  : transcriptUsesIndicScript()
+                    ? 'Translated text'
+                    : 'Alert text'
+              }}
+            </button>
+          }
           @if (stage() !== 'IDLE') {
             <button class="btn-ghost" (click)="reset()">Reset</button>
           }
@@ -72,6 +89,24 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
           </button>
         </div>
       </header>
+
+      @if (showVoiceTranscript()) {
+        @if (audit(); as a) {
+          <section
+            id="voice-transcript-panel"
+            class="pp-card voice-transcript-panel"
+            aria-live="polite"
+          >
+            <div class="voice-transcript-heading">
+              <span class="pp-label">
+                {{ transcriptUsesIndicScript() ? 'Translated alert' : 'Original-language fallback' }}
+              </span>
+              <span class="chip">Voice transcript</span>
+            </div>
+            <p>{{ a.voice_transcript }}</p>
+          </section>
+        }
+      }
 
       @switch (stage()) {
         @case ('IDLE') {
@@ -279,6 +314,27 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
       align-items: center;
       gap: 10px;
       flex-wrap: wrap;
+    }
+    .transcript-toggle {
+      color: var(--pp-text);
+      border-color: rgba(0, 186, 242, 0.45);
+    }
+    .voice-transcript-panel {
+      margin: -8px 0 20px;
+      padding: 16px 20px;
+    }
+    .voice-transcript-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .voice-transcript-panel p {
+      margin: 10px 0 0;
+      color: var(--pp-text);
+      font-size: 16px;
+      line-height: 1.7;
+      overflow-wrap: anywhere;
     }
 
     .chip {
@@ -600,6 +656,10 @@ export class CounterComponent implements OnDestroy {
   readonly whatsappOpen = signal(false);
   readonly splitDrawerOpen = signal(false);
   readonly busy = signal(false);
+  readonly showVoiceTranscript = signal(false);
+  readonly transcriptUsesIndicScript = computed(() =>
+    /[\u0600-\u06ff\u0900-\u0dff]/u.test(this.audit()?.voice_transcript ?? ''),
+  );
 
   readonly showDisputeCrop = computed(() => {
     const audit = this.audit();
@@ -691,9 +751,14 @@ export class CounterComponent implements OnDestroy {
     this.splitDrawerOpen.set(true);
   }
 
+  toggleVoiceTranscript(): void {
+    this.showVoiceTranscript.update((visible) => !visible);
+  }
+
   reset(): void {
     this.stage.set('IDLE');
     this.audit.set(null);
+    this.showVoiceTranscript.set(false);
     this.payout.set(null);
     this.whatsappOpen.set(false);
     this.splitDrawerOpen.set(false);
@@ -711,6 +776,7 @@ export class CounterComponent implements OnDestroy {
       return;
     }
     this.audit.set(audit);
+    this.showVoiceTranscript.set(false);
     this.payout.set(null);
     this.whatsappOpen.set(false);
     this.splitDrawerOpen.set(false);
