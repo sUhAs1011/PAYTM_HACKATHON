@@ -12,11 +12,12 @@ from decimal import Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.contracts import LoanSchedule, ResolveActionResponse, ResolveRequest, WhatsappClaim
 from app.core import repo
 from app.core.db import get_client
+from app.core.demo_auth import require_demo_auth
 from app.core.money import as_float, dec, q2
 from app.services.pipeline import FixturePipeline
 from app.services.credit_rules import get_credit_rules
@@ -44,7 +45,11 @@ def _auto_locked_deadline(invoice_date: Optional[date]) -> Optional[str]:
 
 
 @router.post("/api/parcha/{invoice_id}/resolve", response_model=ResolveActionResponse)
-async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveActionResponse:
+async def resolve_parcha(
+    invoice_id: str,
+    body: ResolveRequest,
+    _demo_auth: None = Depends(require_demo_auth),
+) -> ResolveActionResponse:
     # The golden fixture has no persisted invoice/merchant row. Preserve its
     # demo Paytm Button flow with a REST-only simulation and no DB/ledger writes.
     if invoice_id == DEMO_FIXTURE_INVOICE_ID:

@@ -11,11 +11,12 @@ WebSocket slice lands, only real scans broadcast.
 
 import logging
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import GOLDEN_SAMPLE_ID
+from app.core.demo_auth import require_demo_auth
 from app.services.pipeline import FixturePipeline
 from app.services.sarvam_tts import synthesize_alert, translate_alert
 
@@ -26,7 +27,10 @@ _fixture_cache = FixturePipeline()
 
 
 @router.post("/api/demo/load-sample")
-async def load_sample(body: dict = Body(default={})) -> JSONResponse:
+async def load_sample(
+    body: dict = Body(default={}),
+    _demo_auth: None = Depends(require_demo_auth),
+) -> JSONResponse:
     sample_id = (body or {}).get("sample_id") or ""
     if sample_id != GOLDEN_SAMPLE_ID:
         raise HTTPException(status_code=404, detail=f"unknown sample_id {sample_id!r}; available: {GOLDEN_SAMPLE_ID!r}")

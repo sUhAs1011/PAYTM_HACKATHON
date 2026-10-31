@@ -4,10 +4,11 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from app.contracts import AuditCompleteData, AuditedInvoiceResponse, ScanStartedData
 from app.core.config import ALLOWED_UPLOAD_CONTENT_TYPES, MAX_UPLOAD_BYTES, get_settings
+from app.core.demo_auth import require_demo_auth
 from app.core.db import get_client
 from app.services import merchant_resolver
 from app.services.pipeline import get_pipeline
@@ -21,6 +22,7 @@ async def scan_parcha(
     request: Request,
     file: UploadFile = File(...),
     merchant_id: str = Form(""),
+    _demo_auth: None = Depends(require_demo_auth),
 ) -> AuditedInvoiceResponse:
     if file.content_type not in ALLOWED_UPLOAD_CONTENT_TYPES:
         raise HTTPException(

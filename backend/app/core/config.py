@@ -33,6 +33,9 @@ class Settings:
     url: str
     secret_key: str
     demo_merchant_id: str
+    demo_auth_enabled: bool
+    demo_auth_username: str
+    demo_auth_password: str
     gemini_api_key: str
     sarvam_api_key: str
     translation_source_language: str
@@ -47,6 +50,14 @@ class Settings:
     def from_env(cls) -> "Settings":
         backend_dir = Path(__file__).resolve().parents[2]
         api_key = os.environ.get("GEMINI_API_KEY", "").strip().strip("\"'")
+        demo_auth_enabled = _env_bool("PARCHA_DEMO_AUTH_ENABLED", default=False)
+        demo_auth_username = os.environ.get("PARCHA_DEMO_AUTH_USERNAME", "").strip()
+        demo_auth_password = os.environ.get("PARCHA_DEMO_AUTH_PASSWORD", "").strip()
+        if demo_auth_enabled and not (demo_auth_username and demo_auth_password):
+            raise ValueError(
+                "PARCHA_DEMO_AUTH_USERNAME and PARCHA_DEMO_AUTH_PASSWORD are required "
+                "when PARCHA_DEMO_AUTH_ENABLED is true"
+            )
         tts_language = os.environ.get("PARCHA_TTS_LANGUAGE", "hi-IN").strip() or "hi-IN"
         translation_target_language = (
             os.environ.get("PARCHA_TRANSLATION_TARGET_LANGUAGE", tts_language).strip() or tts_language
@@ -57,6 +68,9 @@ class Settings:
             url=os.environ.get("SUPABASE_URL", "").strip(),
             secret_key=os.environ.get("SUPABASE_SECRET_KEY", "").strip(),
             demo_merchant_id=os.environ.get("PARCHA_DEMO_MERCHANT_ID", "").strip(),
+            demo_auth_enabled=demo_auth_enabled,
+            demo_auth_username=demo_auth_username,
+            demo_auth_password=demo_auth_password,
             gemini_api_key=api_key,
             sarvam_api_key=os.environ.get("SARVAM_API_KEY", "").strip().strip("\"'"),
             translation_source_language=(
@@ -82,6 +96,18 @@ def get_settings() -> Settings:
         load_env()
         _settings = Settings.from_env()
     return _settings
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip().casefold()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
 
 
 def reset_settings() -> None:
