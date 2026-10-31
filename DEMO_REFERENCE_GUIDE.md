@@ -62,7 +62,7 @@ This reference guide contains everything needed to configure, run, and demonstra
                                                 • 7-Day QR Split Schedule
 ```
 
-**Current integration notes:** uploaded scans use Gemini 2.5 Flash, Pillow, Decimal auditing, Supabase persistence, and (when `SARVAM_API_KEY` is configured) Sarvam Bulbul v4 Flash TTS. `PARCHA_TTS_LANGUAGE` defaults to `hi-IN`; generated audio is returned through `/static/audio/`. Missing key/provider failure keeps the transcript speech fallback. The current local `.env` has no key yet, so Sarvam playback is pending a rotated key and live smoke check. TTS has a 5-second request timeout and can extend scan response time. `load-sample` remains fixture-verbatim and resolve are REST-only; resolve does not emit `PAYOUT_APPROVED` because the frontend also applies the REST response. The UPI Autopay badge is a stored/demo state, not a live mandate registration.
+**Current integration notes:** uploaded scans use Gemini 2.5 Flash, Pillow, Decimal auditing, Supabase persistence, and (when `SARVAM_API_KEY` is configured) Sarvam Bulbul v4 Flash TTS. `PARCHA_TTS_LANGUAGE` defaults to `hi-IN`; generated audio is returned through `/static/audio/`. Missing key/provider failure keeps the transcript speech fallback. The current local `.env` has no key yet, so Sarvam playback is pending a rotated key and live smoke check. TTS has a 5-second request timeout and can extend scan response time. `load-sample` remains fixture-verbatim; resolve is REST-only and does not emit `PAYOUT_APPROVED` because the frontend applies the REST response. The Autopay badge is a demo flag, not a live mandate.
 
 ### Flow Details
 1. **State 1: IDLE**
@@ -84,7 +84,7 @@ This reference guide contains everything needed to configure, run, and demonstra
     * `POST /api/parcha/{id}/resolve` returns the payout/loan schedule; the counter applies the REST response (no payout WS event).
       * **WhatsApp Drawer:** Slides out showing the distributor message preview, crop proof when present, and Paytm payment link preview.
      * **GST IMS Shield:** Flips status to `Shield Active · DISPUTED_PENDING_IMS` (protects before 14th of month).
-     * **7-Day Soundbox Split:** Displays 7-day schedule (Day 1 ₹1,980 deducted from QR sweep, remaining ₹11,880, backup UPI Autopay active).
+      * **7-Day Soundbox Split:** Day 1 is recorded as a signed `LOAN_DEDUCT`. The drawer can play a read-only projection for Days 2–7 using available Paytm balance and recent QR receipts. If the projection is short, it shows a simulated bank-mandate contribution; no D2–D7 or bank-fallback amounts are written or actually debited. The Blueprint's production fallback rule remains 48 hours of zero QR activity; the low-balance path is a what-if demo scenario.
 
 ---
 

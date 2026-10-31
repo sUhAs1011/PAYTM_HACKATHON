@@ -38,7 +38,7 @@ async def get_merchant(merchant_id: str) -> dict[str, Any] | None:
 async def get_transactions(
     merchant_id: str,
     merchant_vpa: str,
-    start: datetime,
+    start: datetime | None = None,
     end: datetime | None = None,
 ) -> list[dict[str, Any]]:
     from app.core.db import get_client
@@ -52,9 +52,10 @@ async def get_transactions(
         .eq("merchant_id", merchant_id)
         .eq("merchant_vpa", merchant_vpa)
         .neq("payer_vpa", merchant_vpa)
-        .gte("created_at", start.isoformat())
         .order("created_at")
     )
+    if start is not None:
+        query = query.gte("created_at", start.isoformat())
     if end is not None:
         # Seven-day simulation windows are [start, end), so a transaction on
         # a boundary belongs to exactly one cycle, not both adjacent weeks.
@@ -146,6 +147,33 @@ async def get_loan_ledger(loan_id: str) -> list[dict[str, Any]]:
     )
     logger.debug("supabase_query_completed table=merchant_account_ledger row_count=%s", len(response.data or []))
     return response.data or []
+
+
+async def get_merchant_ledger(merchant_id: str) -> list[dict[str, Any]]:
+    """Return the merchant's signed ledger rows (QR credits remain in transactions)."""
+    from app.core.db import get_client
+
+    client = await get_client()
+    query = (
+        client.table("merchant_account_ledger")
+        .select("id,merchant_id,entry_ts,kind,amount,loan_id")
+        .eq("merchant_id", merchant_id)
+        .order("entry_ts")
+    )
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    page_size = 1000
+    while True:
+        response = await query.range(offset, offset + page_size - 1).execute()
+        page = response.data or []
+        rows.extend(page)
+        if len(page) < page_size:
+            logger.debug(
+                "supabase_query_completed table=merchant_account_ledger row_count=%s",
+                len(rows),
+            )
+            return rows
+        offset += page_size
 
 
 async def create_ledger_entry(values: dict[str, Any]) -> dict[str, Any]:

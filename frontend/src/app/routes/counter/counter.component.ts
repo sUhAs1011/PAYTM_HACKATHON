@@ -210,6 +210,7 @@ export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
             <app-split-credit
               [preApproval]="pre"
               [schedule]="p.loan_schedule"
+              [invoiceId]="p.invoice_id"
               (closed)="splitDrawerOpen.set(false)"
             />
           }

@@ -106,6 +106,11 @@ async def insert_loan(client, payload: dict) -> dict:
     return (response.data or [payload])[0]
 
 
+async def delete_loan(client, loan_id: str) -> None:
+    """Compensate for a failed Day-1 ledger write before the loan is exposed."""
+    await client.table("split_credit_loans").delete().eq("id", loan_id).execute()
+
+
 async def insert_invoice(client, payload: dict) -> dict:
     response = await client.table("invoices").insert(payload).execute()
     return (response.data or [payload])[0]

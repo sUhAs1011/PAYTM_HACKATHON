@@ -19,8 +19,12 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 | `WS /ws/counter` | ✅ live — broadcasts `SCAN_STARTED` then `AUDIT_COMPLETE` for uploaded scans to all connected counters |
 | `/static/*` | ✅ live — serves `backend/static/`; fixture crop is present, fixture WAV is absent, generated scan WAVs are served |
 | `/api/parcha/{id}/validate`, `/alerts`, `/price-analysis` | ✅ live — Module 4 Decimal validation and invoice-history price analysis |
-| `/api/credit/*` GETs | ✅ live — read-only recommendations/schedule/alerts |
+| `/api/credit/*` GETs | ✅ live — read-only recommendations/schedule/alerts and daily-sweep projection |
 | `/api/credit/*` POST writes | ⏸️ not mounted — keep ledger schema/kinds unchanged per user decision |
+
+`GET /api/credit/{invoice_id}/sweep-preview` is an additive, read-only Module 4 route (not a CIS
+endpoint). It returns the current Paytm-balance snapshot plus a recent-QR replay projection; it does
+not persist Days 2–7 or the simulated bank-mandate fallback.
 
 ## 2. Files (high level)
 
@@ -35,6 +39,7 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 - `backend/static/crops/demo_pen_edit.jpg` — visibly labeled demo-only placeholder, not a Gemini crop. `backend/static/audio/demo_alert.wav` remains absent for the fixture path; live uploaded scans generate per-invoice WAVs when Sarvam is configured.
 - `app/services/pipeline.py` — `LiveParchaPipeline` plus `FixturePipeline` reserved for `load-sample` only.
 - `app/services/credit_rules.py` — transaction-backed CIS daily-credit cap with stored merchant-volume fallback.
+- `app/credit/service/sweep_preview.py` — read-only Paytm balance/QR forecast and simulated bank-shortfall projection; never writes D2–D7 preview values.
 - `app/services/merchant_resolver.py` — B1 demo-merchant chain.
 - `app/services/exporters.py` — Tally XML + Marg CSV builders (Module 5 deliverable, gateway-exposed).
 - `app/services/gemini_vision.py`, `pillow_cropper.py` — Module 3 vision extraction and contextual crop.
@@ -48,6 +53,7 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 - **Voice alert:** `voice_transcript` is a concise deterministic three-sentence summary (supplier/invoice, flagged lines/reason/overcharge, payout/day-one split). Sarvam reads `SARVAM_API_KEY` and `PARCHA_TTS_LANGUAGE` from root `.env`; language defaults to `hi-IN`. Generated audio is served from `/static/audio/`. If the key/provider is unavailable, the existing transcript speech fallback remains. The synchronous API has a 5-second timeout and can extend end-to-end scan latency beyond the 3.5-second target.
 - **Amount rule:** accepted line totals use the invoice's billed rate with Gemini's accepted quantity; high rates are flagged but not auto-repriced. Overcharge is computed from positive line-level printed-vs-recomputed differences; the printed grand total is display-only and may contain freight.
 - **Credit rule:** the CIS seven-day flow uses 30-day successful incoming QR transactions, with `avg_daily_qr_volume` fallback; daily cap is 35% of average daily QR volume. Resolve rejects an amount over the seven-day cap.
+- **Loan playback:** resolve records Day 1 in `merchant_account_ledger` as signed `LOAN_DEDUCT`, consistent with the persisted `remaining_balance`. `GET /api/credit/{invoice_id}/sweep-preview` calculates Days 2–7 from current available Paytm balance (`OPENING + signed ledger + successful incoming QR transactions`) and recent QR receipts. If projected Paytm funds fall short, it shows a simulated bank-mandate shortfall; the GET does not mutate loan or ledger state. The drawer labels D2–D7 and bank fallback as preview only. The UI what-if trigger is balance insufficiency; the Blueprint's 48-hour zero-QR production trigger remains unchanged.
 - **Remaining fixture:** `POST /api/demo/load-sample` intentionally returns the CIS golden fixture for the pitch fail-safe; it does not write DB rows or broadcast WS events.
 - **Weekly credit:** Module 4 read-only GETs remain mounted. Its weekly-credit POST write routes are unmounted until the ledger kind contract is explicitly changed; no schema change was approved.
 
@@ -65,7 +71,8 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 - ✅ In-process (Starlette TestClient, host run): all endpoints + guards; real Supabase reads; one full resolve→rollback cycle proving exact write math (loan 4935.06/705.01/2676.80/4230.05, IMS upsert, status flip) with DB restored pristine (56 loans / 150 IMS / AUDITED).
 - ✅ Host TestClient verified two simultaneous WS clients each receive `SCAN_STARTED` → `AUDIT_COMPLETE`, exact narrow event shape vs wider REST response, reconnect/disconnect cleanup, and no extra event from sample-load, resolve, or invalid scan. Static crop returns `image/jpeg`; missing WAV, unknown path, and directory listing return 404.
 - ✅ Integrated host TestClient checked live Supabase read-only validation, price analysis, credit recommendation, and export; test-patched scan verified event order and REST/WS shape without calling Gemini or writing DB rows.
-- ✅ All 26 unit tests pass, including mocked TTS WAV writing/failure fallback, live-pipeline TTS URL/transcript wiring, amount mapping, median benchmark, daily QR cap/fallback, and disabled weekly-credit POST routes.
+- ✅ All 34 unit tests pass, including Day 1 ledger consistency/retry handling, read-only QR/bank-shortfall projection, mocked TTS fallback, live-pipeline amount mapping, median benchmark, and disabled weekly-credit POST routes.
+- ✅ Host TestClient resolve against the demo invoice wrote one Day 1 `LOAN_DEDUCT`; the read-only preview returned six days. The temporary loan/ledger row and invoice/IMS status changes were rolled back and verified against the exact pre-test state.
 - ⏳ Live Sarvam smoke not completed: SDK installed locally, but the root `.env` has no key. Rotate the chat-exposed key and add its replacement to `.env`, then run `python scripts/sarvam_tts_smoke.py` from `backend/`.
 - ⏳ Deferred (Docker Desktop unavailable): `docker compose up --build` health check + browser-through-proxy smoke for `/ws` and `/static`. Existing Compose mounts persist crops/audio; backend also mounts `./contracts:/contracts:ro` for the fixture.
 - Live DB had one pre-existing non-seed loan + two related ledger rows before this slice's write-path check (57 loans / 177 ledger vs seed baseline 56 / 175). These were left untouched; temporary test resolve was rolled back and the demo invoice is AUDITED/ACCEPTED with no loan.
@@ -74,7 +81,8 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 
 1. **Docker verification:** once Docker Desktop works, rebuild/test both services (the API image now needs `sarvamai`) and verify `/api`, `/ws`, and `/static` through the Angular 4200 proxy.
 2. **Gemini end-to-end scan:** not run during merge checks (would call external Gemini and persist an invoice); test later with an approved bill/API key and clean up only the generated test rows.
-3. **Resolve Event 3 / weekly-credit writes:** remain disabled until coordinating with Dev 1 and approving any needed ledger contract change.
+3. **Frontend/Docker verification:** drawer playback is implemented but not browser-tested because Docker is unavailable. Rebuild the frontend/API images and verify the projected QR/bank path when Docker works.
+4. **Resolve Event 3 / weekly-credit writes:** remain disabled until coordinating with Dev 1 and approving any needed ledger contract change.
 
 ## 7. Quick host-only API test (no Docker, no frontend)
 

@@ -11,6 +11,30 @@ import {
 export const DEMO_MERCHANT_ID = 'a0000000-0000-0000-0000-000000000001';
 const JSON_HEADERS: Record<string, string> = { 'Content-Type': 'application/json' };
 
+export interface SweepDayPreview {
+  day: number;
+  forecast_qr_inflow: number;
+  due: number;
+  paytm_balance_before: number;
+  qr_deduction: number;
+  bank_mandate_deduction: number;
+  missed: number;
+  paytm_balance_after: number;
+  projected_loan_balance: number;
+  mandate_triggered: boolean;
+}
+
+export interface SweepPreviewResponse {
+  invoice_id: string;
+  loan_id: string;
+  simulation_only: boolean;
+  forecast_source: string;
+  starting_paytm_balance: number;
+  daily_deduction: number;
+  autopay_mandate_active: boolean;
+  days: SweepDayPreview[];
+}
+
 /**
  * REST client for CIS §4 endpoints.
  * Directly communicates with the FastAPI backend through the /api proxy.
@@ -96,6 +120,23 @@ export class ApiService {
 
     const data = (await res.json()) as ResolveActionResponse;
     return data;
+  }
+
+  // -- GET /api/credit/{invoice_id}/sweep-preview -----------------------------
+
+  async getSweepPreview(invoiceId: string): Promise<SweepPreviewResponse> {
+    const res = await fetch(`/api/credit/${encodeURIComponent(invoiceId)}/sweep-preview`);
+    if (!res.ok) {
+      let errorDetail = `HTTP ${res.status}`;
+      try {
+        const errorJson = await res.json();
+        if (errorJson?.detail) errorDetail = errorJson.detail;
+      } catch {
+        // keep HTTP status as the error
+      }
+      throw new Error(`Sweep preview failed: ${errorDetail}`);
+    }
+    return (await res.json()) as SweepPreviewResponse;
   }
 
   // -- GET /api/parcha/{id}/export?format=tally|marg -------------------------

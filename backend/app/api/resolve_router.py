@@ -7,9 +7,10 @@ deviation; do not change without coordinating with Module 1.
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
 
@@ -18,12 +19,14 @@ from app.core import repo
 from app.core.db import get_client
 from app.core.money import as_float, dec, q2
 from app.services.credit_rules import get_credit_rules
+from app.credit.db.query import create_ledger_entry, get_loan_ledger
 
 logger = logging.getLogger("parchapay.api")
 router = APIRouter()
 
 FALLBACK_DISTRIBUTOR_PHONE = "+919876543210"
 SETTLEMENT_METHOD = "SOUNDBOX_7_DAY_SPLIT"
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _auto_locked_deadline(invoice_date: Optional[date]) -> Optional[str]:
@@ -66,6 +69,30 @@ async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveAction
             detail="approved_total exceeds the 35% daily QR velocity cap for this tenure",
         )
 
+    loan = None
+    try:
+        loan = await repo.insert_loan(
+            client,
+            {
+                "invoice_id": invoice_id,
+                "merchant_id": merchant["id"],
+                "principal_amount": str(q2(plan.principal)),
+                "daily_deduction_rate": str(plan.daily_deduction),
+                "tenure_days": body.tenure_days,
+                "daily_cap_limit": str(plan.daily_cap),
+                "autopay_mandate_active": True,
+                "remaining_balance": str(plan.remaining_balance),
+                "status": "ACTIVE",
+            },
+        )
+    except Exception as exc:
+        raise _write_failure("split_credit_loans insert", exc) from exc
+
+    try:
+        await _write_day_one_ledger(client, loan, merchant["id"], plan.daily_deduction)
+    except Exception as exc:
+        raise _write_failure("merchant_account_ledger Day-1 LOAN_DEDUCT", exc) from exc
+
     # PostgREST has no cross-table transaction. IMS is updated in place for
     # seeded invoices (one row per invoice); otherwise a pending row is added.
     try:
@@ -85,24 +112,6 @@ async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveAction
             )
     except Exception as exc:
         raise _write_failure("gst_ims_records upsert", exc) from exc
-
-    try:
-        await repo.insert_loan(
-            client,
-            {
-                "invoice_id": invoice_id,
-                "merchant_id": merchant["id"],
-                "principal_amount": str(q2(plan.principal)),
-                "daily_deduction_rate": str(plan.daily_deduction),
-                "tenure_days": body.tenure_days,
-                "daily_cap_limit": str(plan.daily_cap),
-                "autopay_mandate_active": True,
-                "remaining_balance": str(plan.remaining_balance),
-                "status": "ACTIVE",
-            },
-        )
-    except Exception as exc:
-        raise _write_failure("split_credit_loans insert", exc) from exc
 
     try:
         await repo.update_invoice_status(client, invoice_id, repo.INVOICE_STATUS_DISPUTED)
@@ -137,3 +146,59 @@ async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveAction
 def _write_failure(stage: str, exc: Exception) -> HTTPException:
     logger.error("resolve write sequence failed at %s: %s", stage, exc)
     return HTTPException(status_code=500, detail=f"resolve failed at {stage}; partial state inspectable in logs")
+
+
+async def _write_day_one_ledger(client, loan: dict, merchant_id: str, deduction: Decimal) -> None:
+    """Record the Day-1 deduction already represented in remaining_balance.
+
+    The unique (loan, IST-day) index makes this ledger row idempotent. If the
+    insert response fails ambiguously, inspect the row before compensating the
+    new loan so a committed debit is never paired with a deleted loan.
+    """
+    loan_id = loan.get("id")
+    if not loan_id:
+        raise RuntimeError("loan insert returned no ID for the Day-1 ledger entry")
+    amount = q2(-deduction)
+    entry_ts = datetime.now(timezone.utc)
+    payload = {
+        "merchant_id": merchant_id,
+        "loan_id": loan_id,
+        "kind": "LOAN_DEDUCT",
+        "amount": str(amount),
+        "entry_ts": entry_ts.isoformat(),
+    }
+    try:
+        await create_ledger_entry(payload)
+        return
+    except Exception:
+        logger.exception("Day-1 ledger insert failed; checking for committed entry loan_id=%s", loan_id)
+
+    try:
+        rows = await get_loan_ledger(loan_id)
+    except Exception:
+        logger.exception("could not verify Day-1 ledger insert; preserving loan_id=%s", loan_id)
+        raise RuntimeError("Day-1 ledger insert outcome is unknown; loan preserved for inspection")
+
+    target_day = entry_ts.astimezone(IST).date()
+    for row in rows:
+        raw_ts = row.get("entry_ts")
+        if not raw_ts:
+            continue
+        row_ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+        if row_ts.tzinfo is None:
+            row_ts = row_ts.replace(tzinfo=timezone.utc)
+        if (
+            row_ts.astimezone(IST).date() == target_day
+            and row.get("kind") == "LOAN_DEDUCT"
+            and q2(dec(row.get("amount", 0))) == amount
+        ):
+            return
+
+    if rows:
+        raise RuntimeError("loan already has a different ledger event for the Day-1 IST date")
+    try:
+        await repo.delete_loan(client, str(loan_id))
+    except Exception as exc:
+        logger.exception("failed to compensate loan after Day-1 ledger insert failure loan_id=%s", loan_id)
+        raise RuntimeError("Day-1 ledger insert failed and loan compensation failed") from exc
+    raise RuntimeError("Day-1 ledger insert failed; newly created loan was removed")

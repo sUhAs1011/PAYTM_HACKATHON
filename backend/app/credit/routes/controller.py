@@ -9,6 +9,7 @@ from app.credit.schema.schema import (
     CreditAlertsResponse,
     CreditRecommendationResponse,
     CreditScheduleResponse,
+    SweepPreviewResponse,
     WeeklySimulationResponse,
 )
 from app.credit.service.service import (
@@ -18,6 +19,7 @@ from app.credit.service.service import (
     get_credit_schedule,
     simulate_credit_week,
 )
+from app.credit.service.sweep_preview import get_sweep_preview
 
 router = APIRouter(prefix="/api/credit", tags=["Module 4 — credit reads"])
 # The weekly-credit POST flows are intentionally split onto a separate router.
@@ -67,6 +69,12 @@ async def credit_recommendation_route(invoice_id: str):
     return await _handle(
         get_credit_recommendation, _uuid(invoice_id, "invoice")
     )
+
+
+@router.get("/{invoice_id}/sweep-preview", response_model=SweepPreviewResponse)
+async def sweep_preview_route(invoice_id: str):
+    """Read-only CIS daily-sweep preview; it never mutates loan or ledger state."""
+    return await _handle(get_sweep_preview, _uuid(invoice_id, "invoice"))
 
 
 @write_router.post("/{invoice_id}/accept", response_model=CreditAcceptanceResponse)

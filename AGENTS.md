@@ -71,6 +71,8 @@ The CIS resolve-flow lending cap is 35% of the merchant's 30-day average daily Q
 
 Soumya's weekly-credit POST flows (`/api/credit/{invoice_id}/accept` and `/api/credit/loans/{loan_id}/simulate-week`) are intentionally not mounted in the integrated app: their persisted `merchant_account_ledger.kind` vocabulary is outside the approved contract. Keep compatible credit GET routes; no schema change without explicit approval.
 
+The additive Module 4 `GET /api/credit/{invoice_id}/sweep-preview` is read-only and not a CIS endpoint. It projects D2–D7 from Paytm ledger/QR history; do not persist its projected bank fallback or future deductions.
+
 ## Commands
 
 Do not run `npm install` or `pip install` unless the user asks.
@@ -115,6 +117,7 @@ Do not run `npm install` or `pip install` unless the user asks.
 - 2026-10-31: Integrated Suhas's Gemini 2.5 Flash extractor and Pillow cropper through the shared pipeline. The standalone in-memory gateway and hard-coded `12 → 10` quantity rewrite are not used. Sarvam Bulbul TTS is now wired in `sarvam_tts.py`; the transcript speech fallback remains when credentials/provider calls fail. See `suhas.md` for integration notes.
 - 2026-10-31: Full-stack branch integration is implemented locally: shared Python contracts, merged runtime config, live Gemini/Pillow → Decimal/median price audit → Supabase invoice/line/IMS persistence, and transaction-backed 7-day daily-credit rules. Frontend demo mock injection/fallback code is removed; duplicate laptop REST+WS audit transitions are guarded. Soumya credit GETs remain; weekly credit POST writes stay unmounted. Host suite: 23/23 unit tests pass; read-only API/TestClient flows and one resolve→rollback passed; 9-table smoke reachable (57 loans/177 ledger includes the pre-existing extra loan/two rows). No real Gemini call or Docker test was made; Docker CLI unavailable. Nothing pushed.
 - 2026-10-31: Sarvam Bulbul v4 Flash TTS is wired through `backend/app/services/sarvam_tts.py`; `LiveParchaPipeline` builds a short deterministic audit transcript and writes generated WAV files under persistent `/static/audio/`. `PARCHA_TTS_LANGUAGE` defaults to `hi-IN`. Missing key/provider errors preserve transcript speech fallback. `sarvamai>=0.1.41,<0.2` is in backend requirements; local SDK installed. 26 unit tests, compileall, and generated-WAV `/static` serving check pass. Real smoke is pending a rotated key in ignored root `.env`; do not reuse the chat-exposed key. Read-only DB smoke currently reports 152 invoices/508 line items (versus earlier seed baseline; no rows changed by these tests). Docker CLI unavailable, so container rebuild/runtime remains pending.
+- 2026-10-31: Implemented `.opencode/plans/loan-deduction-simulation-plan.md`: resolve writes the recorded Day 1 signed `LOAN_DEDUCT`; read-only `GET /api/credit/{invoice_id}/sweep-preview` projects D2–D7 from ledger + successful QR history and simulates bank-shortfall coverage without writes. Split-credit drawer now plays the projection with explicit preview-only wording. No schema changes; weekly-credit POSTs stay disabled. Blueprint's 48-hour zero-QR trigger remains unchanged; low-balance fallback is a what-if preview. Host suite: 34/34 passes; live resolve + projection tested and DB fully restored. Docker/browser build verification pending (Docker CLI unavailable).
 
 ## Do not silently fix
 

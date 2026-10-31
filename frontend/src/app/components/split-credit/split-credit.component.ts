@@ -1,8 +1,9 @@
-import { Component, OnDestroy, computed, effect, input, output, signal } from '@angular/core';
+import { Component, OnDestroy, computed, effect, inject, input, output, signal } from '@angular/core';
 
 import { LoanSchedule, SplitCreditPreApproval } from '@contracts/contracts';
 
 import { formatINR } from '../../shared/format';
+import { ApiService, SweepDayPreview, SweepPreviewResponse } from '../../services/api.service';
 
 /**
  * 7-Day Split-Credit drawer (PRD F6) — reveals the loan schedule created by
@@ -19,11 +20,11 @@ import { formatINR } from '../../shared/format';
     <section class="sheet" role="dialog" aria-label="7-day Soundbox split credit schedule">
       <header>
         <div class="title">
-          <span class="pp-label">Settlement-backed credit</span>
+          <span class="pp-label">QR split simulation</span>
           <h2>7-Day Soundbox Split</h2>
         </div>
         @if (preApproval().autopay_mandate_registered) {
-          <span class="badge autopay">&#128737;&#65039; UPI Autopay backup mandate active</span>
+          <span class="badge autopay">&#128737;&#65039; Backup mandate simulation available</span>
         }
         <button class="close" (click)="closed.emit()" aria-label="Close split credit drawer">
           &times;
@@ -32,28 +33,42 @@ import { formatINR } from '../../shared/format';
 
       <div class="days">
         @for (d of days(); track d) {
-          <div class="day" [class.paid]="d === 1 && schedule().day_1_deducted && day1Paid()">
+          <div
+            class="day"
+            [class.paid]="dayPaid(d)"
+            [class.bank]="dayUsesBank(d)"
+            [class.missed]="dayMissed(d)"
+          >
             <span class="dnum">D{{ d }}</span>
             <span class="dbar">
               <i></i>
             </span>
-            <span class="damt">{{ inr(schedule().daily_deduction) }}</span>
+            <span class="damt">{{ inr(dueAmount(d)) }}</span>
+            <span class="rail">{{ railLabel(d) }}</span>
           </div>
         }
       </div>
 
-      <p class="progress-note">
-        @if (schedule().day_1_deducted && day1Paid()) {
-          Day 1 of {{ days().length }} &middot; {{ inr(schedule().daily_deduction) }} reserved from
-          today&rsquo;s customer QR sweep
+      <div class="preview-controls">
+        <button class="play" type="button" (click)="togglePlayback()" [disabled]="previewLoading() || !preview()?.days?.length || !day1Paid()">
+          {{ playing() ? 'Pause simulation' : playbackComplete() ? 'Replay 7-day simulation' : 'Play repayment simulation' }}
+        </button>
+        @if (previewLoading()) {
+          <span>Loading read-only QR balance preview…</span>
+        } @else if (previewError()) {
+          <span class="preview-error">{{ previewError() }} Day 1 remains recorded; later days are not simulated.</span>
         } @else {
-          Waiting for today&rsquo;s QR sweep&hellip;
+          <span>Days 2–7 are a projection from recent QR history. Bank fallback is a what-if only; no payment is sent.</span>
         }
+      </div>
+
+      <p class="progress-note">
+        {{ statusNote() }}
       </p>
 
       <div class="stats">
         <div class="stat remaining">
-          <span class="pp-label">Remaining balance</span>
+          <span class="pp-label">{{ playbackStarted() ? 'Projected loan balance' : 'Recorded balance after Day 1' }}</span>
           <strong>{{ inr(displayRemaining()) }}</strong>
         </div>
         <div class="stat">
@@ -75,9 +90,8 @@ import { formatINR } from '../../shared/format';
       </div>
 
       <p class="fineprint">
-        Daily deductions are reserved from incoming customer QR settlements before the remaining
-        balance is paid out. If QR collections stall, the UPI Autopay mandate sweeps the installment
-        from the registered bank account.
+        Day 1 is the recorded resolve state. Days 2–7 are a read-only projection. The bank amount is
+        shown as an assumed UPI Autopay fallback for the demo only; no mandate or bank debit is issued.
       </p>
     </section>
   `,
@@ -201,10 +215,58 @@ import { formatINR } from '../../shared/format';
     .day.paid .dnum {
       color: var(--pp-green);
     }
+    .day.bank {
+      border-color: rgba(244, 183, 64, 0.72);
+      background: rgba(244, 183, 64, 0.1);
+    }
+    .day.bank .dbar i {
+      width: 100%;
+      background: linear-gradient(90deg, #e6a52e, #ffd36b);
+    }
+    .day.missed {
+      border-color: rgba(255, 98, 98, 0.7);
+      background: rgba(255, 98, 98, 0.09);
+    }
+    .day.missed .dbar i {
+      width: 100%;
+      background: linear-gradient(90deg, #d94f5a, #ff8b8b);
+    }
     .damt {
       font-size: 11px;
       color: var(--pp-text-dim);
     }
+    .rail {
+      min-height: 27px;
+      font-size: 9px;
+      line-height: 1.3;
+      text-align: center;
+      color: var(--pp-text-faint);
+    }
+    .day.bank .rail { color: #ffd36b; }
+    .day.missed .rail { color: #ff9b9b; }
+
+    .preview-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 14px;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--pp-text-faint);
+    }
+    .play {
+      flex: 0 0 auto;
+      border: 1px solid rgba(47, 208, 122, 0.5);
+      border-radius: 9px;
+      padding: 9px 13px;
+      background: var(--pp-green-bg);
+      color: var(--pp-text);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .play:disabled { opacity: 0.5; cursor: not-allowed; }
+    .preview-error { color: #ffadad; }
 
     .progress-note {
       margin: 14px 2px 18px;
@@ -252,12 +314,20 @@ import { formatINR } from '../../shared/format';
 export class SplitCreditComponent implements OnDestroy {
   readonly preApproval = input.required<SplitCreditPreApproval>();
   readonly schedule = input.required<LoanSchedule>();
+  readonly invoiceId = input.required<string>();
   readonly closed = output<void>();
 
+  private readonly api = inject(ApiService);
   protected readonly inr = formatINR;
 
   readonly day1Paid = signal(false);
   readonly displayRemaining = signal(0);
+  readonly preview = signal<SweepPreviewResponse | null>(null);
+  readonly previewLoading = signal(true);
+  readonly previewError = signal('');
+  readonly playbackDay = signal(1);
+  readonly playbackStarted = signal(false);
+  readonly playing = signal(false);
 
   readonly days = computed(() =>
     Array.from({ length: this.preApproval().tenure_days }, (_, i) => i + 1),
@@ -265,8 +335,14 @@ export class SplitCreditComponent implements OnDestroy {
 
   private animated = false;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private playbackTimer: ReturnType<typeof setInterval> | null = null;
+  private destroyed = false;
 
   constructor() {
+    effect(() => {
+      const invoiceId = this.invoiceId();
+      void this.loadPreview(invoiceId);
+    });
     effect(() => {
       const s = this.schedule();
       if (!s || this.animated) {
@@ -297,9 +373,112 @@ export class SplitCreditComponent implements OnDestroy {
     });
   }
 
+  async loadPreview(invoiceId: string): Promise<void> {
+    this.previewLoading.set(true);
+    this.previewError.set('');
+    try {
+      const response = await this.api.getSweepPreview(invoiceId);
+      if (!this.destroyed) this.preview.set(response);
+    } catch {
+      if (!this.destroyed) this.previewError.set('Could not load the repayment preview.');
+    } finally {
+      if (!this.destroyed) this.previewLoading.set(false);
+    }
+  }
+
+  togglePlayback(): void {
+    if (this.playing()) {
+      this.stopPlayback();
+      return;
+    }
+    const days = this.preview()?.days ?? [];
+    if (!days.length) return;
+    if (this.playbackDay() >= days[days.length - 1].day) {
+      this.playbackDay.set(1);
+      this.displayRemaining.set(this.schedule().remaining_balance);
+    }
+    this.playbackStarted.set(true);
+    this.playing.set(true);
+    this.playbackTimer = setInterval(() => this.advancePlayback(), 850);
+  }
+
+  dayPaid(day: number): boolean {
+    if (day === 1) return this.schedule().day_1_deducted && this.day1Paid();
+    const previewDay = this.previewFor(day);
+    return day <= this.playbackDay() && !!previewDay && previewDay.missed === 0;
+  }
+
+  dayUsesBank(day: number): boolean {
+    const previewDay = this.previewFor(day);
+    return day <= this.playbackDay() && !!previewDay && previewDay.bank_mandate_deduction > 0;
+  }
+
+  dayMissed(day: number): boolean {
+    const previewDay = this.previewFor(day);
+    return day <= this.playbackDay() && !!previewDay && previewDay.missed > 0;
+  }
+
+  railLabel(day: number): string {
+    if (day === 1) return this.day1Paid() ? 'Recorded QR debit' : 'Day 1';
+    const item = this.previewFor(day);
+    if (!item) return 'Preview unavailable';
+    if (day > this.playbackDay()) return `QR ${this.inr(item.qr_deduction)} · Bank ${this.inr(item.bank_mandate_deduction)}`;
+    if (item.missed > 0) return `Unpaid ${this.inr(item.missed)}`;
+    if (item.bank_mandate_deduction > 0) return `QR + Bank ${this.inr(item.bank_mandate_deduction)}`;
+    return `QR ${this.inr(item.qr_deduction)}`;
+  }
+
+  dueAmount(day: number): number {
+    return this.previewFor(day)?.due ?? this.schedule().daily_deduction;
+  }
+
+  statusNote(): string {
+    if (this.previewLoading()) return 'Loading a read-only projection from recent QR activity…';
+    if (this.previewError()) return `${this.previewError()} Later days remain a preview only.`;
+    if (!this.playbackStarted()) {
+      return 'Day 1 is recorded in the loan. Play to preview QR coverage and any simulated bank shortfall for Days 2–7.';
+    }
+    const current = this.previewFor(this.playbackDay());
+    if (!current) return 'Day 1 recorded; no future installments remain in this schedule.';
+    const bank = current.bank_mandate_deduction > 0
+      ? ` Simulated bank fallback: ${this.inr(current.bank_mandate_deduction)}.`
+      : '';
+    const missed = current.missed > 0 ? ` Uncovered: ${this.inr(current.missed)}.` : '';
+    return `Day ${current.day} projection: QR ${this.inr(current.qr_deduction)} of ${this.inr(current.due)}.${bank}${missed}`;
+  }
+
+  playbackComplete(): boolean {
+    const days = this.preview()?.days ?? [];
+    return !!days.length && !this.playing() && this.playbackDay() >= days[days.length - 1].day;
+  }
+
+  private previewFor(day: number): SweepDayPreview | undefined {
+    return this.preview()?.days.find((item) => item.day === day);
+  }
+
+  private advancePlayback(): void {
+    const next = (this.preview()?.days ?? []).find((item) => item.day > this.playbackDay());
+    if (!next) {
+      this.stopPlayback();
+      return;
+    }
+    this.playbackDay.set(next.day);
+    this.displayRemaining.set(next.projected_loan_balance);
+    const days = this.preview()?.days ?? [];
+    if (next.day >= (days.length ? days[days.length - 1].day : 1)) this.stopPlayback();
+  }
+
+  private stopPlayback(): void {
+    if (this.playbackTimer) clearInterval(this.playbackTimer);
+    this.playbackTimer = null;
+    this.playing.set(false);
+  }
+
   ngOnDestroy(): void {
+    this.destroyed = true;
     if (this.timer) {
       clearInterval(this.timer);
     }
+    this.stopPlayback();
   }
 }

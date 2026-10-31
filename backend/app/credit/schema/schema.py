@@ -57,3 +57,27 @@ class WeeklySimulationResponse(BaseModel):
 class CreditAlertsResponse(BaseModel):
     loan_id: str
     alerts: list[dict[str, Any]]
+
+
+class SweepDayPreview(BaseModel):
+    day: int
+    forecast_qr_inflow: float
+    due: float
+    paytm_balance_before: float
+    qr_deduction: float
+    bank_mandate_deduction: float
+    missed: float
+    paytm_balance_after: float
+    projected_loan_balance: float
+    mandate_triggered: bool
+
+
+class SweepPreviewResponse(BaseModel):
+    invoice_id: str
+    loan_id: str
+    simulation_only: bool = True
+    forecast_source: str
+    starting_paytm_balance: float
+    daily_deduction: float
+    autopay_mandate_active: bool
+    days: list[SweepDayPreview]
