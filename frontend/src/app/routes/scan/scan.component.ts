@@ -1,9 +1,16 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
-import { AuditedInvoiceResponse } from '@contracts/contracts';
+import {
+  AuditedInvoiceResponse,
+  DraftLineItem,
+  InvoiceDraftReview,
+  LineItemCorrection,
+  ScanDraftResponse,
+} from '@contracts/contracts';
 
-import { ApiService } from '../../services/api.service';
+import { ApiService, DEMO_MERCHANT_ID } from '../../services/api.service';
 import { formatINR } from '../../shared/format';
 
 type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
@@ -21,7 +28,7 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
 @Component({
   selector: 'app-scan',
   standalone: true,
-  imports: [RouterLink],
+  imports: [RouterLink, FormsModule],
   template: `
     <div class="scan-shell">
       <header class="scan-header">
@@ -79,6 +86,43 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
           </section>
         }
         @case ('AUDIT_READY') {
+          @if (review(); as r) {
+            <section class="pp-card result-card">
+              <span class="chip">Check the parse</span>
+              <h2>{{ r.supplier_name || 'Supplier bill' }}</h2>
+              <p class="inv">{{ r.invoice_number }} &middot; {{ r.invoice_date }}</p>
+              <div class="totals">
+                <div>
+                  <span class="pp-label">Billed</span>
+                  <strong>{{ inr(r.billed_total) }}</strong>
+                </div>
+                <div class="approved">
+                  <span class="pp-label">Pay</span>
+                  <strong>After review</strong>
+                </div>
+              </div>
+              <ul class="mini-items">
+                @for (item of editableItems(); track item.id) {
+                  <li
+                    [class.bad]="item.has_pen_markup"
+                    [class.warn]="item.ocr_confidence < 0.8"
+                  >
+                    <span class="dot"></span>
+                    <input class="edit-name" [(ngModel)]="item.raw_item_name" aria-label="Item name" />
+                    <label class="edit-num">Qty <input type="number" min="0" [(ngModel)]="item.billed_qty" /></label>
+                    <label class="edit-num">Rate <input type="number" min="0" step="0.01" [(ngModel)]="item.billed_rate" /></label>
+                  </li>
+                }
+              </ul>
+              <p class="counter-hint">Tap any value the OCR read wrong, then confirm to run the audit.</p>
+              <div class="actions">
+                <button class="btn-ghost" (click)="reset()">Discard</button>
+                <button class="btn-primary" (click)="confirmDraft()" [disabled]="busy()">
+                  Confirm &amp; audit
+                </button>
+              </div>
+            </section>
+          }
           @if (audit(); as a) {
             <section class="pp-card result-card">
               <span
@@ -389,6 +433,34 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
       background: var(--pp-yellow);
     }
 
+    .mini-items .edit-name {
+      flex: 1;
+      min-width: 0;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--pp-line);
+      border-radius: 8px;
+      color: var(--pp-text);
+      font-size: 13px;
+      padding: 5px 8px;
+    }
+    .mini-items .edit-num {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      color: var(--pp-text-faint);
+      text-transform: uppercase;
+    }
+    .mini-items .edit-num input {
+      width: 56px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--pp-line);
+      border-radius: 8px;
+      color: var(--pp-text);
+      font-size: 13px;
+      padding: 5px 6px;
+    }
+
     .transcript {
       margin: 0 0 12px;
       padding: 12px 14px;
@@ -437,6 +509,9 @@ export class ScanComponent {
   readonly busy = signal(false);
   readonly previewUrl = signal<string | null>(null);
   readonly audit = signal<AuditedInvoiceResponse | null>(null);
+  readonly draft = signal<ScanDraftResponse | null>(null);
+  readonly review = signal<InvoiceDraftReview | null>(null);
+  readonly editableItems = signal<DraftLineItem[]>([]);
   readonly errorMessage = signal<string | null>(null);
 
   readonly flaggedCount = computed(() => {
@@ -493,8 +568,50 @@ export class ScanComponent {
     }
     this.previewUrl.set(null);
     this.audit.set(null);
+    this.draft.set(null);
+    this.review.set(null);
+    this.editableItems.set([]);
     this.errorMessage.set(null);
     this.stage.set('IDLE');
+  }
+
+  /** Sends only edited fields as corrections; confirm runs the audit. */
+  async confirmDraft(): Promise<void> {
+    const d = this.draft();
+    const r = this.review();
+    if (!d || !r || this.busy()) {
+      return;
+    }
+    this.busy.set(true);
+    this.errorMessage.set(null);
+    try {
+      const originals = new Map(r.items.map((i) => [i.id, i]));
+      const corrections: LineItemCorrection[] = this.editableItems().flatMap((item) => {
+        const original = originals.get(item.id);
+        if (!original) {
+          return [];
+        }
+        const correction: LineItemCorrection = { id: item.id };
+        if (item.raw_item_name !== original.raw_item_name) correction.raw_item_name = item.raw_item_name;
+        if (item.printed_qty !== original.printed_qty) correction.printed_qty = item.printed_qty;
+        if (item.billed_qty !== original.billed_qty) correction.billed_qty = item.billed_qty;
+        if (item.free_qty !== original.free_qty) correction.free_qty = item.free_qty;
+        if (item.billed_rate !== original.billed_rate) correction.billed_rate = item.billed_rate;
+        if (item.tax_percent !== original.tax_percent) correction.tax_percent = item.tax_percent;
+        return Object.keys(correction).length > 1 ? [correction] : [];
+      });
+      const audit = await this.api.confirmReview(d.invoice_id, {
+        merchant_id: d.merchant_id || DEMO_MERCHANT_ID,
+        corrections,
+      });
+      this.review.set(null);
+      this.editableItems.set([]);
+      this.audit.set(audit);
+    } catch (err) {
+      this.fail(err instanceof Error ? err.message : 'Could not confirm the bill.');
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   private async upload(file: File): Promise<void> {
@@ -502,8 +619,11 @@ export class ScanComponent {
     this.stage.set('UPLOADING');
     this.errorMessage.set(null);
     try {
-      const audit = await this.api.scan(file);
-      this.audit.set(audit);
+      const draft = await this.api.scan(file);
+      const review = await this.api.getReview(draft.invoice_id, draft.merchant_id);
+      this.draft.set(draft);
+      this.review.set(review);
+      this.editableItems.set(review.items.map((item) => ({ ...item })));
       this.stage.set('AUDIT_READY');
     } catch (err) {
       // scan() falls back to the fixture on network failure; reaching here

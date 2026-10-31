@@ -638,7 +638,13 @@ export class CounterComponent implements OnDestroy {
     this.stage.set('PROCESSING');
     this.processingMessage.set('Auditing supplier parcha via Gemini 3.6 Flash…');
     try {
-      const audit = await this.api.scan(file);
+      // Scan persists a review draft; the laptop surface auto-confirms with
+      // no corrections so the audited payload lands as before.
+      const draft = await this.api.scan(file);
+      const audit = await this.api.confirmReview(draft.invoice_id, {
+        merchant_id: draft.merchant_id,
+        corrections: [],
+      });
       this.applyAudit(audit);
     } catch (err) {
       console.error('[counter] Bill scan failed', err);

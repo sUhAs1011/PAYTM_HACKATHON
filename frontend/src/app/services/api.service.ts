@@ -2,10 +2,13 @@ import { Injectable } from '@angular/core';
 
 import {
   AuditedInvoiceResponse,
+  ConfirmCorrectionsRequest,
   ExportFormat,
+  InvoiceDraftReview,
   LoadSampleRequest,
   ResolveRequest,
   ResolveActionResponse,
+  ScanDraftResponse,
 } from '@contracts/contracts';
 
 export const DEMO_MERCHANT_ID = 'a0000000-0000-0000-0000-000000000001';
@@ -43,7 +46,7 @@ export interface SweepPreviewResponse {
 export class ApiService {
   // -- POST /api/parcha/scan (multipart: file, merchant_id) ------------------
 
-  async scan(file: File, merchantId: string = DEMO_MERCHANT_ID): Promise<AuditedInvoiceResponse> {
+  async scan(file: File, merchantId: string = DEMO_MERCHANT_ID): Promise<ScanDraftResponse> {
     const form = new FormData();
     form.append('file', file, file.name || 'parcha.jpg');
     form.append('merchant_id', merchantId);
@@ -62,8 +65,60 @@ export class ApiService {
       throw new Error(`Bill scan failed: ${errorDetail}`);
     }
 
+    // Scan persists a user_pending_review draft; confirm drives the audit.
+    const data = (await res.json()) as ScanDraftResponse;
+    if (!data.invoice_id || !data.merchant_id) {
+      throw new Error('[api] scan response missing draft identifiers');
+    }
+    return data;
+  }
+
+  // -- GET /api/parcha/{id}/review?merchant_id= -------------------------------
+
+  async getReview(invoiceId: string, merchantId: string): Promise<InvoiceDraftReview> {
+    const res = await fetch(
+      `/api/parcha/${encodeURIComponent(invoiceId)}/review?merchant_id=${encodeURIComponent(merchantId)}`,
+    );
+    if (!res.ok) {
+      let errorDetail = `HTTP ${res.status}`;
+      try {
+        const errorJson = await res.json();
+        if (errorJson && errorJson.detail) {
+          errorDetail = errorJson.detail;
+        }
+      } catch {
+        // use default HTTP status
+      }
+      throw new Error(`Review fetch failed: ${errorDetail}`);
+    }
+    return (await res.json()) as InvoiceDraftReview;
+  }
+
+  // -- POST /api/parcha/{id}/confirm — corrections → audit → bill_verified ---
+
+  async confirmReview(
+    invoiceId: string,
+    body: ConfirmCorrectionsRequest,
+  ): Promise<AuditedInvoiceResponse> {
+    const res = await fetch(`/api/parcha/${encodeURIComponent(invoiceId)}/confirm`, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let errorDetail = `HTTP ${res.status}`;
+      try {
+        const errorJson = await res.json();
+        if (errorJson && errorJson.detail) {
+          errorDetail = errorJson.detail;
+        }
+      } catch {
+        // use default HTTP status
+      }
+      throw new Error(`Confirm failed: ${errorDetail}`);
+    }
     const data = (await res.json()) as AuditedInvoiceResponse;
-    this.assertAudited(data, 'scan');
+    this.assertAudited(data, 'confirm');
     return data;
   }
 
