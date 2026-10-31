@@ -1,7 +1,7 @@
 import { Routes } from '@angular/router';
 
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'scan' },
+  { path: '', pathMatch: 'full', redirectTo: 'counter' },
   {
     path: 'scan',
     title: 'ParchaPay AI — Scan Parcha',

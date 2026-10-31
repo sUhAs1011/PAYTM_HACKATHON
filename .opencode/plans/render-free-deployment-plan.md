@@ -46,7 +46,7 @@
 3. **Package the production app as one Render container.**
    - Add a root-context, multi-stage Render Dockerfile: build Angular with Node in production mode, then install/run FastAPI from the Python image; copy the Angular `dist` output, `backend/`, `contracts/`, and the fixture crop needed by the demo.
    - Keep `.env` excluded from the build context. Adjust static-file ignore rules only as needed to retain committed demo fixtures while excluding generated `alert_*.wav` and `pen_edit_*.jpg` files.
-   - Serve Angular `index.html` for `/`, `/scan`, and `/counter` after registering API, WebSocket, `/static`, and `/healthz` routes. Preserve the existing same-origin relative API and WebSocket URLs.
+   - Serve Angular `index.html` for `/`, `/scan`, and `/counter` after registering API, WebSocket, `/static`, and `/healthz` routes. The Angular root route redirects to `/counter`; `/scan` remains available. Preserve the existing same-origin relative API and WebSocket URLs.
    - Make Uvicorn bind to `0.0.0.0:${PORT:-8000}`; Compose continues to use port 8000 locally, while Render supplies its public service port (default 10000).
 
 4. **Add the Render Blueprint.**
