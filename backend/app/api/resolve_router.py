@@ -18,6 +18,7 @@ from app.contracts import LoanSchedule, ResolveActionResponse, ResolveRequest, W
 from app.core import repo
 from app.core.db import get_client
 from app.core.money import as_float, dec, q2
+from app.services.pipeline import FixturePipeline
 from app.services.credit_rules import get_credit_rules
 from app.credit.db.query import create_ledger_entry, get_loan_ledger
 
@@ -27,6 +28,8 @@ router = APIRouter()
 FALLBACK_DISTRIBUTOR_PHONE = "+919876543210"
 SETTLEMENT_METHOD = "SOUNDBOX_7_DAY_SPLIT"
 IST = ZoneInfo("Asia/Kolkata")
+DEMO_FIXTURE_INVOICE_ID = "demo-golden-fixture-001"
+_demo_fixture_cache = FixturePipeline()
 
 
 def _auto_locked_deadline(invoice_date: Optional[date]) -> Optional[str]:
@@ -42,6 +45,40 @@ def _auto_locked_deadline(invoice_date: Optional[date]) -> Optional[str]:
 
 @router.post("/api/parcha/{invoice_id}/resolve", response_model=ResolveActionResponse)
 async def resolve_parcha(invoice_id: str, body: ResolveRequest) -> ResolveActionResponse:
+    # The golden fixture has no persisted invoice/merchant row. Preserve its
+    # demo Paytm Button flow with a REST-only simulation and no DB/ledger writes.
+    if invoice_id == DEMO_FIXTURE_INVOICE_ID:
+        fixture = _demo_fixture_cache.load()
+        pre_approval = fixture.split_credit_pre_approval
+        if body.tenure_days != pre_approval.tenure_days:
+            raise HTTPException(
+                status_code=422,
+                detail=f"demo fixture supports {pre_approval.tenure_days}-day split only",
+            )
+        principal = dec(fixture.approved_total)
+        daily_deduction = dec(pre_approval.daily_deduction_amount)
+        return ResolveActionResponse(
+            invoice_id=invoice_id,
+            settlement_method=SETTLEMENT_METHOD,
+            whatsapp_claim=WhatsappClaim(
+                distributor_phone=FALLBACK_DISTRIBUTOR_PHONE,
+                message_preview=(
+                    f"Namaste {fixture.supplier_name}. Delivery received for Inv #{fixture.invoice_number}. "
+                    f"Demo fixture amount approved: Rs {as_float(principal)}. "
+                    f"Day 1 simulated deduction: Rs {as_float(daily_deduction)}. "
+                    "[View Verified Challan Crop & Collect via Paytm Link]"
+                ),
+                status="SENT",
+            ),
+            gst_ims_state=repo.INVOICE_STATUS_DISPUTED,
+            loan_schedule=LoanSchedule(
+                principal=as_float(principal),
+                daily_deduction=as_float(daily_deduction),
+                day_1_deducted=True,
+                remaining_balance=as_float(q2(principal - daily_deduction)),
+            ),
+        )
+
     client = await get_client()
     bundle = await repo.get_invoice_bundle(client, invoice_id)
     if not bundle:

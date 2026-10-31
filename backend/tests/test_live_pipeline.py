@@ -4,10 +4,38 @@ from unittest.mock import AsyncMock, patch
 
 from app.contracts import BoundingBox2D, ExtractedLineItem, RawExtractedInvoice
 from app.services.credit_rules import CreditPlan
-from app.services.pipeline import LiveParchaPipeline
+from app.services.pipeline import LiveParchaPipeline, _select_crop_target
 
 
 class LivePipelineTests(unittest.IsolatedAsyncioTestCase):
+    def test_crop_target_prefers_quantity_edited_marked_row(self):
+        box = BoundingBox2D(ymin=100, xmin=100, ymax=200, xmax=200)
+        marked_without_quantity_change = ExtractedLineItem(
+            raw_item_name="FORTUNE OIL 1L",
+            billed_qty=12,
+            printed_qty=12,
+            unit_rate=100.0,
+            line_total=1200.0,
+            has_pen_markup=True,
+            pen_markup_box=box,
+            confidence_score=0.95,
+        )
+        quantity_edited = ExtractedLineItem(
+            raw_item_name="PARLEG BISCUIT BOX",
+            billed_qty=10,
+            printed_qty=12,
+            unit_rate=20.0,
+            line_total=200.0,
+            has_pen_markup=True,
+            pen_markup_box=box,
+            confidence_score=0.95,
+        )
+
+        self.assertIs(
+            _select_crop_target([marked_without_quantity_change, quantity_edited]),
+            quantity_edited,
+        )
+
     async def test_decimal_amounts_use_corrected_qty_and_rate_flags_do_not_reprice(self):
         raw = RawExtractedInvoice(
             supplier_name="Sharmaji Wholesale Distributors",

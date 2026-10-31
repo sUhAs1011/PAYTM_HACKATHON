@@ -1,8 +1,8 @@
-"""Gemini 2.5 Flash Vision Client (Module 3).
+"""Gemini 3.6 Flash Vision Client (Module 3).
 
 Extracts structured invoice line items, tax details, free/scheme units,
 handwritten pen adjustments, and 2D bounding boxes normalized to 0-1000.
-Strictly uses Gemini 2.5 Flash.
+Uses the stable Gemini 3.6 Flash model with structured output.
 """
 
 import logging
@@ -52,7 +52,7 @@ def extract_invoice_from_image(
     image_bytes: bytes,
     mime_type: str = "image/jpeg",
 ) -> RawExtractedInvoice:
-    """Send bill image to Gemini 2.5 Flash with strict Pydantic response_schema.
+    """Send bill image to Gemini 3.6 Flash with strict Pydantic response_schema.
 
     Raises RuntimeError if GEMINI_API_KEY is not configured or if inference fails.
     """
@@ -70,7 +70,7 @@ def extract_invoice_from_image(
     client = genai.Client(api_key=clean_key)
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
 
-    model_name = "gemini-2.5-flash"
+    model_name = "gemini-3.6-flash"
     logger.info(f"[gemini_vision] Executing VLM extraction using model: {model_name}...")
 
     try:
@@ -100,4 +100,4 @@ def extract_invoice_from_image(
 
     except Exception as exc:
         logger.error("[gemini_vision] Gemini extraction failed error_type=%s", type(exc).__name__)
-        raise RuntimeError(f"Gemini 2.5 Flash extraction failed ({type(exc).__name__})") from exc
+        raise RuntimeError(f"Gemini 3.6 Flash extraction failed ({type(exc).__name__})") from exc

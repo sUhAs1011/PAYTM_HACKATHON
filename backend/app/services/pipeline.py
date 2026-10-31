@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from starlette.concurrency import run_in_threadpool
 
-from app.contracts import AuditedInvoiceResponse, AuditedItem, GstImsShield, SplitCreditPreApproval
+from app.contracts import AuditedInvoiceResponse, AuditedItem, ExtractedLineItem, GstImsShield, SplitCreditPreApproval
 from app.core import repo
 from app.core.config import fixture_candidates, get_settings
 from app.core.db import get_client
@@ -49,6 +49,23 @@ def get_pipeline() -> ParchaPipeline:
     if _pipeline is None:
         raise RuntimeError("Pipeline not initialized")
     return _pipeline
+
+
+def _select_crop_target(line_items: list[ExtractedLineItem]) -> Optional[ExtractedLineItem]:
+    """Prefer a visually boxed pen edit that also changes the accepted quantity."""
+    return next(
+        (
+            item
+            for item in line_items
+            if item.has_pen_markup
+            and item.pen_markup_box is not None
+            and item.printed_qty != item.billed_qty
+        ),
+        None,
+    ) or next(
+        (item for item in line_items if item.has_pen_markup and item.pen_markup_box is not None),
+        None,
+    )
 
 
 class FixturePipeline:
@@ -101,15 +118,8 @@ class LiveParchaPipeline:
         supplier = _match_supplier(extracted.supplier_name, extracted.supplier_gstin, suppliers)
         sku_matches = [_match_sku(item.raw_item_name, skus) for item in extracted.line_items]
 
-        # Crop only an OCR-confirmed box; never fabricate a box/crop for demo quantities.
-        crop_target = next(
-            (
-                item
-                for item in extracted.line_items
-                if item.has_pen_markup and item.pen_markup_box is not None
-            ),
-            None,
-        )
+        # Only OCR-confirmed boxes are eligible; prefer the accepted quantity edit.
+        crop_target = _select_crop_target(extracted.line_items)
         crop_url = ""
         if crop_target is not None:
             crop_url = await run_in_threadpool(

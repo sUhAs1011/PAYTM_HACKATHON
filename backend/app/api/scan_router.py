@@ -41,7 +41,7 @@ async def scan_parcha(
         session_id=f"sess_{uuid4().hex[:8]}",
         timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         status="PROCESSING_IMAGE",
-        message="Auditing supplier parcha via Gemini 2.5 Flash...",
+        message="Auditing supplier parcha via Gemini 3.6 Flash...",
     )
     await request.app.state.ws_manager.broadcast("SCAN_STARTED", started.model_dump(mode="json"))
 

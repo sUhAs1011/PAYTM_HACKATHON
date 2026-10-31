@@ -5,6 +5,8 @@ import { LoanSchedule, SplitCreditPreApproval } from '@contracts/contracts';
 import { formatINR } from '../../shared/format';
 import { ApiService, SweepDayPreview, SweepPreviewResponse } from '../../services/api.service';
 
+const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
+
 /**
  * 7-Day Split-Credit drawer (PRD F6) — reveals the loan schedule created by
  * APPROVE_SPLIT. Renders the pre-approval caps from the audit payload and
@@ -50,15 +52,19 @@ import { ApiService, SweepDayPreview, SweepPreviewResponse } from '../../service
       </div>
 
       <div class="preview-controls">
-        <button class="play" type="button" (click)="togglePlayback()" [disabled]="previewLoading() || !preview()?.days?.length || !day1Paid()">
-          {{ playing() ? 'Pause simulation' : playbackComplete() ? 'Replay 7-day simulation' : 'Play repayment simulation' }}
-        </button>
-        @if (previewLoading()) {
-          <span>Loading read-only QR balance preview…</span>
-        } @else if (previewError()) {
-          <span class="preview-error">{{ previewError() }} Day 1 remains recorded; later days are not simulated.</span>
+        @if (isFixtureSample()) {
+          <span>Fixture schedule only: no QR history is attached; future deductions are not simulated.</span>
         } @else {
-          <span>Days 2–7 are a projection from recent QR history. Bank fallback is a what-if only; no payment is sent.</span>
+          <button class="play" type="button" (click)="togglePlayback()" [disabled]="previewLoading() || !preview()?.days?.length || !day1Paid()">
+            {{ playing() ? 'Pause simulation' : playbackComplete() ? 'Replay 7-day simulation' : 'Play repayment simulation' }}
+          </button>
+          @if (previewLoading()) {
+            <span>Loading read-only QR balance preview…</span>
+          } @else if (previewError()) {
+            <span class="preview-error">{{ previewError() }} Day 1 remains recorded; later days are not simulated.</span>
+          } @else {
+            <span>Days 2–7 are a projection from recent QR history. Bank fallback is a what-if only; no payment is sent.</span>
+          }
         }
       </div>
 
@@ -68,7 +74,7 @@ import { ApiService, SweepDayPreview, SweepPreviewResponse } from '../../service
 
       <div class="stats">
         <div class="stat remaining">
-          <span class="pp-label">{{ playbackStarted() ? 'Projected loan balance' : 'Recorded balance after Day 1' }}</span>
+          <span class="pp-label">{{ isFixtureSample() ? 'Fixture balance after Day 1' : playbackStarted() ? 'Projected loan balance' : 'Recorded balance after Day 1' }}</span>
           <strong>{{ inr(displayRemaining()) }}</strong>
         </div>
         <div class="stat">
@@ -90,8 +96,12 @@ import { ApiService, SweepDayPreview, SweepPreviewResponse } from '../../service
       </div>
 
       <p class="fineprint">
-        Day 1 is the recorded resolve state. Days 2–7 are a read-only projection. The bank amount is
-        shown as an assumed UPI Autopay fallback for the demo only; no mandate or bank debit is issued.
+        @if (isFixtureSample()) {
+          The golden sample is a UI fixture only; no QR balance is read and no real deduction or bank debit is made.
+        } @else {
+          Day 1 is the recorded resolve state. Days 2–7 are a read-only projection. The bank amount is
+          shown as an assumed UPI Autopay fallback for the demo only; no mandate or bank debit is issued.
+        }
       </p>
     </section>
   `,
@@ -317,6 +327,8 @@ export class SplitCreditComponent implements OnDestroy {
   readonly invoiceId = input.required<string>();
   readonly closed = output<void>();
 
+  readonly isFixtureSample = computed(() => this.invoiceId() === DEMO_FIXTURE_INVOICE_ID);
+
   private readonly api = inject(ApiService);
   protected readonly inr = formatINR;
 
@@ -341,6 +353,12 @@ export class SplitCreditComponent implements OnDestroy {
   constructor() {
     effect(() => {
       const invoiceId = this.invoiceId();
+      if (this.isFixtureSample()) {
+        this.preview.set(null);
+        this.previewError.set('');
+        this.previewLoading.set(false);
+        return;
+      }
       void this.loadPreview(invoiceId);
     });
     effect(() => {
@@ -374,6 +392,12 @@ export class SplitCreditComponent implements OnDestroy {
   }
 
   async loadPreview(invoiceId: string): Promise<void> {
+    if (invoiceId === DEMO_FIXTURE_INVOICE_ID) {
+      this.preview.set(null);
+      this.previewError.set('');
+      this.previewLoading.set(false);
+      return;
+    }
     this.previewLoading.set(true);
     this.previewError.set('');
     try {
@@ -404,22 +428,26 @@ export class SplitCreditComponent implements OnDestroy {
 
   dayPaid(day: number): boolean {
     if (day === 1) return this.schedule().day_1_deducted && this.day1Paid();
+    if (this.isFixtureSample()) return false;
     const previewDay = this.previewFor(day);
     return day <= this.playbackDay() && !!previewDay && previewDay.missed === 0;
   }
 
   dayUsesBank(day: number): boolean {
+    if (this.isFixtureSample()) return false;
     const previewDay = this.previewFor(day);
     return day <= this.playbackDay() && !!previewDay && previewDay.bank_mandate_deduction > 0;
   }
 
   dayMissed(day: number): boolean {
+    if (this.isFixtureSample()) return false;
     const previewDay = this.previewFor(day);
     return day <= this.playbackDay() && !!previewDay && previewDay.missed > 0;
   }
 
   railLabel(day: number): string {
     if (day === 1) return this.day1Paid() ? 'Recorded QR debit' : 'Day 1';
+    if (this.isFixtureSample()) return 'Fixture schedule only';
     const item = this.previewFor(day);
     if (!item) return 'Preview unavailable';
     if (day > this.playbackDay()) return `QR ${this.inr(item.qr_deduction)} · Bank ${this.inr(item.bank_mandate_deduction)}`;
@@ -433,6 +461,9 @@ export class SplitCreditComponent implements OnDestroy {
   }
 
   statusNote(): string {
+    if (this.isFixtureSample()) {
+      return 'Golden fixture schedule; no QR transaction history is attached to this sample.';
+    }
     if (this.previewLoading()) return 'Loading a read-only projection from recent QR activity…';
     if (this.previewError()) return `${this.previewError()} Later days remain a preview only.`;
     if (!this.playbackStarted()) {

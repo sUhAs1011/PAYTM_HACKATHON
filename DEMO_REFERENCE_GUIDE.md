@@ -42,7 +42,7 @@ This reference guide contains everything needed to configure, run, and demonstra
       ▼                                     │
 [FastAPI Gateway] ──► [WebSocket Broadcast: SCAN_STARTED (<0.5s)]
       │
-      ├──► [Gemini 2.5 Flash VLM] ──► Pillow Cropper ──► /static/crops/
+      ├──► [Gemini 3.6 Flash VLM] ──► Pillow Cropper ──► /static/crops/
       │          │ (Raw JSON + Bounding Boxes)
       │          ▼
       ├──► [Deterministic Python Engine (Decimal)]
@@ -62,7 +62,7 @@ This reference guide contains everything needed to configure, run, and demonstra
                                                 • 7-Day QR Split Schedule
 ```
 
-**Current integration notes:** uploaded scans use Gemini 2.5 Flash, Pillow, Decimal auditing, Supabase persistence, and (when `SARVAM_API_KEY` is configured) Sarvam Bulbul v4 Flash TTS. `PARCHA_TTS_LANGUAGE` defaults to `hi-IN`; generated audio is returned through `/static/audio/`. Missing key/provider failure keeps the transcript speech fallback. The current local `.env` has no key yet, so Sarvam playback is pending a rotated key and live smoke check. TTS has a 5-second request timeout and can extend scan response time. `load-sample` remains fixture-verbatim; resolve is REST-only and does not emit `PAYOUT_APPROVED` because the frontend applies the REST response. The Autopay badge is a demo flag, not a live mandate.
+**Current integration notes:** uploaded scans use Gemini 3.6 Flash, Pillow, Decimal auditing, Supabase persistence, and (when `SARVAM_API_KEY` is configured) Sarvam Bulbul v4 Flash TTS. `PARCHA_TTS_LANGUAGE` defaults to `hi-IN`; generated audio is returned through `/static/audio/`. Missing key/provider failure keeps the transcript speech fallback. The current local `.env` has no key yet, so Sarvam playback is pending a rotated key and live smoke check. TTS has a 5-second request timeout and can extend scan response time. `load-sample` remains fixture-verbatim; resolve is REST-only and does not emit `PAYOUT_APPROVED` because the frontend applies the REST response. The Autopay badge is a demo flag, not a live mandate.
 
 ### Flow Details
 1. **State 1: IDLE**
@@ -72,7 +72,7 @@ This reference guide contains everything needed to configure, run, and demonstra
     * Merchant snaps a photo on the phone or selects a bill using the laptop's **Upload Bill** button.
     * The client sends `POST /api/parcha/scan`.
    * Realtime WebSocket pushes `{"event": "SCAN_STARTED"}` to the laptop.
-   * Laptop Soundbox screen immediately animates with a laser-sweep: `"Auditing Parcha... Gemini 2.5 Flash / Decimal audit / Mandi-Pulse"`.
+   * Laptop Soundbox screen immediately animates with a laser-sweep: `"Auditing Parcha... Gemini 3.6 Flash / Decimal audit / Mandi-Pulse"`.
 3. **State 3: AUDIT ALERT**
    * Realtime WebSocket pushes `{"event": "AUDIT_COMPLETE"}`.
     * **Voice Alert:** Once a rotated `SARVAM_API_KEY` is set in root `.env`, the Soundbox plays generated Hindi WAV audio. Without a valid key or when the provider fails, use the tap-to-speak browser transcript fallback.
