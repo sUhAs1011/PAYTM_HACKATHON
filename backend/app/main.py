@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.demo_router import router as demo_router
 from app.api.export_router import router as export_router
 from app.api.resolve_router import router as resolve_router
+from app.api.review_router import router as review_router
 from app.api.scan_router import router as scan_router
 from app.api.ws_router import router as ws_router
 from app.bill_validation.routes.controller import router as bill_validation_router
@@ -56,6 +57,7 @@ app = FastAPI(
 app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(scan_router)
+app.include_router(review_router)
 app.include_router(resolve_router)
 app.include_router(export_router)
 app.include_router(demo_router)

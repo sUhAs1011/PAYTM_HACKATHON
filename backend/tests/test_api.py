@@ -16,6 +16,9 @@ class ApiWiringTests(unittest.TestCase):
         paths = set(app.openapi()["paths"])
         paths.update(route.path for route in app.routes if getattr(route, "path", None))
         self.assertIn("/api/parcha/scan", paths)
+        self.assertIn("/api/parcha/pending-review", paths)
+        self.assertIn("/api/parcha/{invoice_id}/review", paths)
+        self.assertIn("/api/parcha/{invoice_id}/confirm", paths)
         self.assertIn("/api/parcha/{invoice_id}/resolve", paths)
         self.assertIn("/api/parcha/{invoice_id}/export", paths)
         self.assertIn("/api/demo/load-sample", paths)
@@ -37,6 +40,23 @@ class ApiWiringTests(unittest.TestCase):
         response = TestClient(app).get("/api/parcha/not-a-uuid/validate")
         self.assertEqual(response.status_code, 422)
         self.assertTrue(response.headers.get("X-Request-ID"))
+
+    def test_review_routes_reject_invalid_uuids_before_database_access(self):
+        client = TestClient(app)
+        merchant_id = "a0000000-0000-0000-0000-000000000001"
+        detail = client.get(
+            f"/api/parcha/not-a-uuid/review?merchant_id={merchant_id}"
+        )
+        pending = client.get("/api/parcha/pending-review?merchant_id=not-a-uuid")
+        self.assertEqual(detail.status_code, 422)
+        self.assertEqual(pending.status_code, 422)
+
+    def test_confirm_requires_merchant_scope(self):
+        response = TestClient(app).post(
+            "/api/parcha/00000000-0000-0000-0000-000000000001/confirm",
+            json={"corrections": []},
+        )
+        self.assertEqual(response.status_code, 422)
 
     def test_weekly_credit_write_routes_are_not_exposed(self):
         client = TestClient(app)

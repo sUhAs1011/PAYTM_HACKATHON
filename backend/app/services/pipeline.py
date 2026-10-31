@@ -1,22 +1,33 @@
-"""Scan pipeline seam and real Gemini → audit → Supabase implementation.
+"""Scan pipeline seam: draft extraction + confirmed audit.
 
 The golden fixture remains isolated to `/api/demo/load-sample`. Uploaded
-scans run Gemini extraction, Pillow crop, Decimal line checks, price analysis,
-QR-credit pre-approval, then persist the CIS invoice records before the
-REST response and AUDIT_COMPLETE event are returned/broadcast.
+scans run Gemini extraction and Pillow crop, then persist the raw parse as
+`invoices.status='user_pending_review'` for the human-in-the-loop review.
+Only after the merchant confirms corrections does the deterministic audit
+(line checks, price analysis, QR-credit pre-approval) run; the invoice then
+flips to `bill_verified`, the IMS row is inserted, and AUDIT_COMPLETE is
+broadcast by the router.
 """
 
 import asyncio
 import logging
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Protocol
 from uuid import uuid4
 
 from starlette.concurrency import run_in_threadpool
 
-from app.contracts import AuditedInvoiceResponse, AuditedItem, ExtractedLineItem, GstImsShield, SplitCreditPreApproval
+from app.contracts import (
+    AuditedInvoiceResponse,
+    AuditedItem,
+    ConfirmCorrectionsRequest,
+    ExtractedLineItem,
+    GstImsShield,
+    ScanDraftResponse,
+    SplitCreditPreApproval,
+)
 from app.core import repo
 from app.core.config import fixture_candidates, get_settings
 from app.core.db import get_client
@@ -29,9 +40,22 @@ from app.services.sarvam_tts import synthesize_alert, translate_alert
 logger = logging.getLogger("parchapay.api.pipeline")
 
 
+class DraftNotFoundError(Exception):
+    """The requested review invoice does not exist."""
+
+
+class DraftConflictError(Exception):
+    """The invoice exists but is not awaiting review (already verified/other)."""
+
+
 class ParchaPipeline(Protocol):
-    async def extract_and_audit(
+    async def extract_and_draft(
         self, image_bytes: bytes, content_type: str, merchant: dict
+    ) -> ScanDraftResponse:  # pragma: no cover - interface
+        ...
+
+    async def confirm_and_audit(
+        self, invoice_id: str, merchant_id: str, request: ConfirmCorrectionsRequest
     ) -> AuditedInvoiceResponse:  # pragma: no cover - interface
         ...
 
@@ -95,12 +119,12 @@ class FixturePipeline:
 class LiveParchaPipeline:
     """Real scan path. No demo-specific quantity rewriting or fake SKU IDs."""
 
-    async def extract_and_audit(
+    async def extract_and_draft(
         self, image_bytes: bytes, content_type: str, merchant: dict
-    ) -> AuditedInvoiceResponse:
+    ) -> ScanDraftResponse:
+        """Gemini extraction → supplier/SKU match → pen-edit crop → persist a
+        user_pending_review draft. No audit, IMS row, or credit math yet."""
         from app.engine.math_engine import calculate_line
-        from app.engine.waterfall_engine import analyze_price
-        from app.price_analysis.db.query import get_pincode_peer_rates, get_supplier_history
 
         client = await get_client()
         extracted = await run_in_threadpool(
@@ -126,23 +150,163 @@ class LiveParchaPipeline:
                 crop_pen_markup, image_bytes, crop_target.pen_markup_box, invoice_id
             )
 
-        invoice_for_history = {
+        stored_items: list[dict] = []
+        provisional_total = Decimal("0.00")
+        for raw_item, sku in zip(extracted.line_items, sku_matches):
+            line_calc = calculate_line(
+                {
+                    "raw_item_name": raw_item.raw_item_name,
+                    "billed_qty": raw_item.billed_qty,
+                    "free_qty": raw_item.free_qty,
+                    "billed_rate": raw_item.unit_rate,
+                    "tax_percent": raw_item.gst_percent,
+                    "ocr_confidence": raw_item.confidence_score,
+                }
+            )
+            provisional_total += line_calc.expected_line_total
+            has_pen_markup = bool(
+                raw_item.has_pen_markup or raw_item.printed_qty != raw_item.billed_qty
+            )
+            stored_items.append(
+                {
+                    "invoice_id": invoice_id,
+                    "canonical_sku_id": sku["id"] if sku else None,
+                    "raw_item_name": raw_item.raw_item_name,
+                    "printed_qty": raw_item.printed_qty,
+                    "billed_qty": raw_item.billed_qty,
+                    "free_qty": raw_item.free_qty,
+                    "billed_rate": str(q2(dec(raw_item.unit_rate))),
+                    "tax_percent": str(q2(dec(raw_item.gst_percent))),
+                    "true_landed_cost": str(line_calc.true_landed_cost),
+                    "mrp": str(q2(dec(raw_item.mrp))) if raw_item.mrp is not None else None,
+                    "has_pen_markup": has_pen_markup,
+                    "ocr_confidence": str(dec(raw_item.confidence_score)),
+                    "bounding_box": _box_array(raw_item.pen_markup_box),
+                    "discrepancy_reason": None,
+                    "mandi_pulse_median": None,
+                }
+            )
+
+        billed_total = q2(dec(extracted.printed_grand_total))
+        invoice_number = extracted.invoice_number or f"INV-{invoice_date.year}-{uuid4().hex[:6].upper()}"
+        invoice_row = {
             "id": invoice_id,
             "merchant_id": merchant["id"],
             "supplier_id": supplier["id"] if supplier else None,
+            "invoice_number": invoice_number,
+            "invoice_date": invoice_date.isoformat(),
+            "raw_image_url": None,
+            "dispute_crop_url": crop_url or None,
+            "audio_alert_url": None,
+            "billed_total": str(billed_total),
+            "approved_total": str(q2(provisional_total)),
+            "overcharge_amount": "0.00",
+            "status": repo.INVOICE_STATUS_USER_PENDING_REVIEW,
+        }
+        await self._persist_draft(client, invoice_row, stored_items)
+        logger.info(
+            "scan draft persisted invoice_id=%s merchant_id=%s item_count=%d",
+            invoice_id,
+            merchant["id"],
+            len(stored_items),
+        )
+        return ScanDraftResponse(
+            invoice_id=invoice_id,
+            status=repo.INVOICE_STATUS_USER_PENDING_REVIEW,
+            supplier_name=extracted.supplier_name,
+            supplier_gstin=extracted.supplier_gstin or "",
+            invoice_number=invoice_number,
+            invoice_date=invoice_date.isoformat(),
+            billed_total=as_float(billed_total),
+            item_count=len(stored_items),
+            dispute_crop_url=crop_url,
+            merchant_id=str(merchant["id"]),
+        )
+
+    async def confirm_and_audit(
+        self, invoice_id: str, merchant_id: str, request: ConfirmCorrectionsRequest
+    ) -> AuditedInvoiceResponse:
+        """Apply merchant corrections to a pending draft, then run the full
+        deterministic audit on the corrected data and flip bill_verified."""
+        from app.engine.math_engine import calculate_line
+        from app.engine.waterfall_engine import analyze_price
+        from app.price_analysis.db.query import get_pincode_peer_rates, get_supplier_history
+
+        client = await get_client()
+        bundle = await repo.get_invoice_bundle(client, invoice_id, merchant_id)
+        if bundle is None:
+            raise DraftNotFoundError(f"invoice {invoice_id} not found")
+        if bundle.get("status") != repo.INVOICE_STATUS_USER_PENDING_REVIEW:
+            raise DraftConflictError(
+                f"invoice status {bundle.get('status')!r} is not awaiting review"
+            )
+        merchant = await repo.get_merchant(client, str(bundle["merchant_id"]))
+        if merchant is None:
+            raise RuntimeError("invoice merchant could not be resolved")
+
+        rows = {
+            str(item["id"]): dict(item)
+            for item in (bundle.get("invoice_line_items") or [])
+        }
+        if not rows:
+            raise DraftConflictError("draft invoice has no line items to confirm")
+
+        correction_ids = [correction.id for correction in request.corrections]
+        if len(correction_ids) != len(set(correction_ids)):
+            raise ValueError("each line item may only be corrected once per request")
+        for correction in request.corrections:
+            row = rows.get(correction.id)
+            if row is None:
+                raise ValueError(
+                    f"correction targets unknown line item id {correction.id!r}"
+                )
+            for field_name in (
+                "raw_item_name",
+                "printed_qty",
+                "billed_qty",
+                "free_qty",
+                "billed_rate",
+                "tax_percent",
+                "mrp",
+            ):
+                value = getattr(correction, field_name)
+                if value is not None:
+                    row[field_name] = value
+
+        invoice_number = (request.invoice_number or bundle.get("invoice_number") or "").strip()
+        if request.invoice_date:
+            try:
+                invoice_date = date.fromisoformat(request.invoice_date)
+            except ValueError as exc:
+                raise ValueError("invoice_date must use YYYY-MM-DD format") from exc
+        else:
+            invoice_date = _invoice_date(str(bundle.get("invoice_date") or ""))
+        if not invoice_number:
+            invoice_number = f"INV-{invoice_date.year}-{uuid4().hex[:6].upper()}"
+        supplier = bundle.get("suppliers") or None
+        supplier_name = (supplier or {}).get("name") or "Supplier"
+        supplier_gstin = (supplier or {}).get("gstin") or ""
+        skus = await repo.get_canonical_skus(client)
+        sku_by_id = {str(sku["id"]): sku for sku in skus}
+
+        invoice_for_history = {
+            "id": invoice_id,
+            "merchant_id": bundle["merchant_id"],
+            "supplier_id": bundle.get("supplier_id"),
             "invoice_date": invoice_date.isoformat(),
         }
 
         # Fetch the per-SKU supplier and market history concurrently, and only
-        # once for duplicate SKUs in one invoice. This reduces the scan
+        # once for duplicate SKUs in one invoice. This reduces the confirm
         # waterfall's PostgREST round trips while preserving its window/gate.
         history_tasks: dict[str, asyncio.Task] = {}
         peer_tasks: dict[str, asyncio.Task] = {}
-        for sku in sku_matches:
-            if not sku:
+        for row in rows.values():
+            sku_id = row.get("canonical_sku_id")
+            if not sku_id:
                 continue
-            sku_id = str(sku["id"])
-            if supplier and sku_id not in history_tasks:
+            sku_id = str(sku_id)
+            if bundle.get("supplier_id") and sku_id not in history_tasks:
                 history_tasks[sku_id] = asyncio.create_task(
                     get_supplier_history(invoice_for_history, sku_id)
                 )
@@ -162,34 +326,42 @@ class LiveParchaPipeline:
         peers_by_sku = {sku_id: task.result() for sku_id, task in peer_tasks.items()}
 
         response_items: list[AuditedItem] = []
-        stored_items: list[dict] = []
+        item_updates: dict[str, dict] = {}
         approved_total = Decimal("0.00")
         overcharge_total = Decimal("0.00")
         issue_summaries: list[str] = []
 
-        for raw_item, sku in zip(extracted.line_items, sku_matches):
+        for row in rows.values():
+            item_id = str(row["id"])
+            sku = sku_by_id.get(str(row.get("canonical_sku_id") or ""))
             sku_id = sku["id"] if sku else None
-            rate = dec(raw_item.unit_rate)
+            rate = dec(row["billed_rate"])
+            tax_percent = dec(row["tax_percent"])
             supplier_history = history_by_sku.get(str(sku_id), []) if sku_id else []
             peer_rates = peers_by_sku.get(str(sku_id), []) if sku_id else []
             price = analyze_price(
                 rate,
-                [row["billed_rate"] for row in supplier_history],
+                [r["billed_rate"] for r in supplier_history],
                 peer_rates,
             )
 
             line_calc = calculate_line(
                 {
-                    "raw_item_name": raw_item.raw_item_name,
-                    "billed_qty": raw_item.billed_qty,
-                    "free_qty": raw_item.free_qty,
-                    "billed_rate": raw_item.unit_rate,
-                    "tax_percent": raw_item.gst_percent,
-                    "ocr_confidence": raw_item.confidence_score,
+                    "raw_item_name": row["raw_item_name"],
+                    "billed_qty": row["billed_qty"],
+                    "free_qty": row["free_qty"],
+                    "billed_rate": row["billed_rate"],
+                    "tax_percent": row["tax_percent"],
+                    "ocr_confidence": row["ocr_confidence"],
                 }
             )
             expected = line_calc.expected_line_total
-            printed_line_total = dec(raw_item.line_total)
+            # The printed line total is not a stored column; reconstruct it
+            # from the original printed qty so a pen edit (printed != billed)
+            # still surfaces as overcharge after correction.
+            printed_line_total = q2(
+                dec(row["printed_qty"]) * rate * (Decimal("1") + tax_percent / Decimal("100"))
+            )
             line_delta = q2(printed_line_total - expected)
             math_error = abs(line_delta) >= Decimal("0.01")
             line_overcharge = max(Decimal("0.00"), line_delta)
@@ -197,9 +369,10 @@ class LiveParchaPipeline:
             overcharge_total += line_overcharge
 
             has_pen_markup = bool(
-                raw_item.has_pen_markup or raw_item.printed_qty != raw_item.billed_qty
+                row.get("has_pen_markup")
+                or dec(row["printed_qty"]) != dec(row["billed_qty"])
             )
-            confidence_review = dec(raw_item.confidence_score) < Decimal("0.80")
+            confidence_review = dec(row["ocr_confidence"]) < Decimal("0.80")
             rate_flagged = price["rate_status"] == "FLAGGED_HIGH"
             market = price["pincode_benchmark"]
             peer_median = market.get("median_rate") if market.get("gate_active") else None
@@ -212,7 +385,7 @@ class LiveParchaPipeline:
                 else "Mandi-Pulse inactive (<5 stores)"
             )
 
-            mrp = dec(raw_item.mrp) if raw_item.mrp is not None else (
+            mrp = dec(row["mrp"]) if row.get("mrp") is not None else (
                 dec(sku["standard_mrp"]) if sku and sku.get("standard_mrp") is not None else None
             )
             low_margin = bool(
@@ -240,18 +413,18 @@ class LiveParchaPipeline:
 
             rate_status = "FLAGGED_HIGH" if (rate_flagged or has_pen_markup or math_error or low_margin) else "OK"
             if findings:
-                issue_summaries.append(f"{raw_item.raw_item_name}: {', '.join(findings)}")
+                issue_summaries.append(f"{row['raw_item_name']}: {', '.join(findings)}")
 
             response_items.append(
                 AuditedItem(
-                    item_name=raw_item.raw_item_name,
-                    billed_qty=raw_item.billed_qty,
-                    printed_qty=raw_item.printed_qty,
-                    free_qty=raw_item.free_qty,
+                    item_name=row["raw_item_name"],
+                    billed_qty=int(row["billed_qty"]),
+                    printed_qty=int(row["printed_qty"]),
+                    free_qty=int(row["free_qty"]),
                     billed_rate=as_float(q2(rate)),
-                    tax_percent=as_float(q2(dec(raw_item.gst_percent))),
+                    tax_percent=as_float(q2(tax_percent)),
                     true_landed_cost=as_float(line_calc.true_landed_cost),
-                    ocr_confidence=raw_item.confidence_score,
+                    ocr_confidence=float(dec(row["ocr_confidence"])),
                     has_pen_markup=has_pen_markup,
                     discrepancy_type=discrepancy_type,
                     personal_history_rate=as_float(q2(dec(history_display))),
@@ -261,35 +434,32 @@ class LiveParchaPipeline:
                 )
             )
 
-            stored_items.append(
-                {
-                    "invoice_id": invoice_id,
-                    "canonical_sku_id": sku_id,
-                    "raw_item_name": raw_item.raw_item_name,
-                    "printed_qty": raw_item.printed_qty,
-                    "billed_qty": raw_item.billed_qty,
-                    "free_qty": raw_item.free_qty,
-                    "billed_rate": str(q2(rate)),
-                    "tax_percent": str(q2(dec(raw_item.gst_percent))),
-                    "true_landed_cost": str(line_calc.true_landed_cost),
-                    "mrp": str(q2(mrp)) if mrp is not None else None,
-                    "has_pen_markup": has_pen_markup,
-                    "ocr_confidence": str(dec(raw_item.confidence_score)),
-                    "bounding_box": _box_array(raw_item.pen_markup_box),
-                    "discrepancy_reason": ";".join(findings) if findings else None,
-                    "mandi_pulse_median": str(q2(dec(peer_median))) if peer_median is not None else None,
-                }
-            )
+            item_updates[item_id] = {
+                "raw_item_name": row["raw_item_name"],
+                "printed_qty": int(row["printed_qty"]),
+                "billed_qty": int(row["billed_qty"]),
+                "free_qty": int(row["free_qty"]),
+                "billed_rate": str(q2(rate)),
+                "tax_percent": str(q2(tax_percent)),
+                "true_landed_cost": str(line_calc.true_landed_cost),
+                "mrp": str(q2(mrp)) if mrp is not None else None,
+                "has_pen_markup": has_pen_markup,
+                "discrepancy_reason": ";".join(findings) if findings else None,
+                "mandi_pulse_median": str(q2(dec(peer_median))) if peer_median is not None else None,
+            }
 
         approved_total = q2(approved_total)
         overcharge_total = q2(overcharge_total)
-        billed_total = q2(dec(extracted.printed_grand_total))
+        billed_total = q2(
+            dec(request.billed_total)
+            if request.billed_total is not None
+            else dec(bundle["billed_total"])
+        )
         credit = await get_credit_rules().plan(merchant, approved_total, 7)
-        invoice_number = extracted.invoice_number or f"INV-{invoice_date.year}-{uuid4().hex[:6].upper()}"
         deadline = _ims_deadline(invoice_date)
         flag_reason = "; ".join(issue_summaries) or "Invoice math verified; no flagged line items"
         transcript = _build_voice_transcript(
-            extracted.supplier_name,
+            supplier_name,
             invoice_number,
             response_items,
             overcharge_total,
@@ -308,15 +478,15 @@ class LiveParchaPipeline:
         audio_url = generated_audio_url or "/static/audio/demo_alert.wav"
         response = AuditedInvoiceResponse(
             invoice_id=invoice_id,
-            supplier_name=extracted.supplier_name,
-            supplier_gstin=extracted.supplier_gstin or "",
+            supplier_name=supplier_name,
+            supplier_gstin=supplier_gstin,
             invoice_number=invoice_number,
             invoice_date=invoice_date.isoformat(),
             billed_total=as_float(billed_total),
             approved_total=as_float(approved_total),
             overcharge_amount=as_float(overcharge_total),
             audio_alert_url=audio_url,
-            dispute_crop_url=crop_url,
+            dispute_crop_url=bundle.get("dispute_crop_url") or "",
             voice_transcript=voice_transcript,
             items=response_items,
             gst_ims_shield=GstImsShield(
@@ -334,53 +504,40 @@ class LiveParchaPipeline:
             ),
         )
 
-        invoice_row = {
-            "id": invoice_id,
-            "merchant_id": merchant["id"],
-            "supplier_id": supplier["id"] if supplier else None,
+        await self._persist_confirmation(client, invoice_id, invoice_row={
             "invoice_number": invoice_number,
             "invoice_date": invoice_date.isoformat(),
-            "raw_image_url": None,
-            "dispute_crop_url": crop_url or None,
             "audio_alert_url": audio_url,
             "billed_total": str(billed_total),
             "approved_total": str(approved_total),
             "overcharge_amount": str(overcharge_total),
-            "status": "AUDITED",
-        }
-        await self._persist_scan(client, invoice_row, stored_items, extracted.supplier_gstin)
+            "status": repo.INVOICE_STATUS_BILL_VERIFIED,
+        }, item_updates=item_updates, supplier_gstin=supplier_gstin or None,
+            dispute_proof_url=bundle.get("dispute_crop_url"), deadline=deadline)
+        logger.info(
+            "draft confirmed invoice_id=%s item_count=%d status=%s",
+            invoice_id,
+            len(item_updates),
+            repo.INVOICE_STATUS_BILL_VERIFIED,
+        )
         return response
 
-    async def _persist_scan(
+    async def _persist_draft(
         self,
         client,
         invoice_row: dict,
         line_items: list[dict],
-        supplier_gstin: Optional[str],
     ) -> None:
         invoice_id = invoice_row["id"]
         try:
             await repo.insert_invoice(client, invoice_row)
             await repo.insert_invoice_line_items(client, line_items)
-            await repo.insert_ims_record(
-                client,
-                {
-                    "invoice_id": invoice_id,
-                    "gstin_supplier": supplier_gstin,
-                    "invoice_number": invoice_row["invoice_number"],
-                    "ims_status": "PENDING",
-                    "dispute_proof_url": invoice_row["dispute_crop_url"],
-                    "auto_locked_deadline": _ims_deadline(
-                        date.fromisoformat(invoice_row["invoice_date"])
-                    ).isoformat(),
-                },
-            )
         except Exception:
-            logger.exception("scan persistence failed; attempting rollback of invoice_id=%s", invoice_id)
+            logger.exception("scan draft persistence failed; attempting rollback of invoice_id=%s", invoice_id)
             try:
                 await repo.delete_invoice(client, invoice_id)
             except Exception:
-                logger.exception("scan persistence rollback failed invoice_id=%s", invoice_id)
+                logger.exception("scan draft rollback failed invoice_id=%s", invoice_id)
             crop_url = invoice_row.get("dispute_crop_url") or ""
             if crop_url.startswith("/static/crops/pen_edit_"):
                 crop_file = get_settings().static_dir / crop_url.removeprefix("/static/")
@@ -396,6 +553,36 @@ class LiveParchaPipeline:
                 except OSError:
                     logger.warning("could not remove orphaned scan audio")
             raise
+
+    async def _persist_confirmation(
+        self,
+        client,
+        invoice_id: str,
+        invoice_row: dict,
+        item_updates: dict[str, dict],
+        supplier_gstin: Optional[str],
+        dispute_proof_url: Optional[str],
+        deadline: date,
+    ) -> None:
+        """Best-effort post-confirm writes (PostgREST has no multi-write
+        transaction). Keep the invoice pending until line updates and the
+        idempotent IMS insert are complete, then commit bill_verified last."""
+        for item_id, payload in item_updates.items():
+            await repo.update_invoice_line_item(client, item_id, payload)
+        existing_ims = await repo.get_ims_record_for_invoice(client, invoice_id)
+        if existing_ims is None:
+            await repo.insert_ims_record(
+                client,
+                {
+                    "invoice_id": invoice_id,
+                    "gstin_supplier": supplier_gstin,
+                    "invoice_number": invoice_row["invoice_number"],
+                    "ims_status": "PENDING",
+                    "dispute_proof_url": dispute_proof_url,
+                    "auto_locked_deadline": deadline.isoformat(),
+                },
+            )
+        await repo.update_invoice(client, invoice_id, invoice_row)
 
 
 def _normalize(value: str) -> str:
