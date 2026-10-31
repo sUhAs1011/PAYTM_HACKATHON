@@ -34,6 +34,8 @@ async def export_invoice(invoice_id: str, format: str = "tally") -> Response:
     bundle = await repo.get_invoice_bundle(client, invoice_id)
     if not bundle:
         raise HTTPException(status_code=404, detail=f"invoice {invoice_id} not found")
+    if bundle.get("status") == repo.INVOICE_STATUS_USER_PENDING_REVIEW:
+        raise HTTPException(status_code=409, detail="invoice is awaiting merchant review — confirm first")
     supplier = bundle.get("suppliers") or None
     line_items = bundle.get("invoice_line_items") or []
     if not line_items:

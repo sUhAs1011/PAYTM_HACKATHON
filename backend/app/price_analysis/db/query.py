@@ -12,6 +12,7 @@ async def get_invoice(invoice_id: str) -> dict[str, Any] | None:
     response = (
         await client.table("invoices")
         .select("*")
+        .neq("status", "user_pending_review")
         .eq("id", invoice_id)
         .limit(1)
         .execute()
@@ -81,6 +82,7 @@ async def get_supplier_history(
     query = (
         client.table("invoices")
         .select("id,invoice_date")
+        .neq("status", "user_pending_review")
         .eq("merchant_id", merchant_id)
         .eq("supplier_id", supplier_id)
         .neq("id", invoice["id"])
@@ -166,6 +168,7 @@ async def get_pincode_peer_rates(
         .in_("merchant_id", merchant_ids)
         # start_date is the exclusive boundary so the inclusive end date spans
         # exactly 14 calendar dates, not 15.
+        .neq("status", "user_pending_review")
         .gt("invoice_date", start_date.isoformat())
         .lte("invoice_date", end_date.isoformat())
         .neq("id", current_invoice["id"])

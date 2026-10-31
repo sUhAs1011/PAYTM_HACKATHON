@@ -1,6 +1,10 @@
 import { Injectable, inject } from '@angular/core';
 
 import {
+  ConfirmCorrectionsRequest,
+  InvoiceDraftReview,
+  PendingReviewListResponse,
+  ScanDraftResponse,
   AuditedInvoiceResponse,
   ExportFormat,
   LoadSampleRequest,
@@ -164,6 +168,43 @@ export class ApiService {
   /** Returns the static crop or asset URL directly from the server. */
   assetUrl(contractUrl: string): string {
     return contractUrl;
+  }
+
+  async scanDraft(file: File, merchantId: string = DEMO_MERCHANT_ID): Promise<ScanDraftResponse> {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('merchant_id', merchantId);
+    const res = await this.fetchProtected('/api/parcha/scan-draft', { method: 'POST', body: form });
+    if (!res.ok) throw new Error(`Draft scan failed: ${res.status}`);
+    return (await res.json()) as ScanDraftResponse;
+  }
+
+  async getReview(invoiceId: string, merchantId: string = DEMO_MERCHANT_ID): Promise<InvoiceDraftReview> {
+    const res = await this.fetchProtected(
+      `/api/parcha/${encodeURIComponent(invoiceId)}/review?merchant_id=${encodeURIComponent(merchantId)}`,
+      { method: 'GET' },
+    );
+    if (!res.ok) throw new Error(`Review fetch failed: ${res.status}`);
+    return (await res.json()) as InvoiceDraftReview;
+  }
+
+  async getPendingReviews(merchantId: string = DEMO_MERCHANT_ID): Promise<PendingReviewListResponse> {
+    const res = await this.fetchProtected(
+      `/api/parcha/pending-review?merchant_id=${encodeURIComponent(merchantId)}`,
+      { method: 'GET' },
+    );
+    if (!res.ok) throw new Error(`Pending review fetch failed: ${res.status}`);
+    return (await res.json()) as PendingReviewListResponse;
+  }
+
+  async confirmReview(invoiceId: string, body: ConfirmCorrectionsRequest): Promise<AuditedInvoiceResponse> {
+    const res = await this.fetchProtected(`/api/parcha/${encodeURIComponent(invoiceId)}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`Confirm failed: ${res.status}`);
+    return (await res.json()) as AuditedInvoiceResponse;
   }
 
   private async fetchProtected(url: string, init: RequestInit): Promise<Response> {

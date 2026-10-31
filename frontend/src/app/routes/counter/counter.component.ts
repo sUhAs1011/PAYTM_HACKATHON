@@ -1,4 +1,5 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 
 import { AuditCompleteData, PayoutApprovedData } from '@contracts/contracts';
@@ -11,7 +12,7 @@ import { ApiService } from '../../services/api.service';
 import { WebsocketService } from '../../services/websocket.service';
 import { formatINR } from '../../shared/format';
 
-export type CounterStage = 'IDLE' | 'PROCESSING' | 'AUDIT_ALERT' | 'RESOLVED';
+export type CounterStage = 'IDLE' | 'PROCESSING' | 'REVIEW' | 'AUDIT_ALERT' | 'RESOLVED';
 
 const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
 
@@ -27,7 +28,7 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
 @Component({
   selector: 'app-counter',
   standalone: true,
-  imports: [AuditTableComponent, SoundboxTwinComponent, SplitCreditComponent, WhatsappDrawerComponent],
+  imports: [FormsModule, AuditTableComponent, SoundboxTwinComponent, SplitCreditComponent, WhatsappDrawerComponent],
   template: `
     <div class="counter-shell">
       <input
@@ -87,6 +88,10 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
           <button class="btn-ghost" (click)="loadDemoBill()" [disabled]="busy()">
             Load Sample
           </button>
+          <label class="review-toggle">
+            <input type="checkbox" [(ngModel)]="reviewMode" [disabled]="busy()" />
+            Review OCR
+          </label>
         </div>
       </header>
 
@@ -134,6 +139,10 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
                 <button class="btn-ghost idle-action" (click)="loadDemoBill()" [disabled]="busy()">
                   Load Sample Fixture
                 </button>
+                <label class="review-toggle idle-action">
+                  <input type="checkbox" [(ngModel)]="reviewMode" [disabled]="busy()" />
+                  Review OCR before audit
+                </label>
               </div>
             </div>
           </section>
@@ -151,6 +160,43 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
               <p class="pmsg">{{ processingMessage() }}</p>
             </div>
           </section>
+        }
+        @case ('REVIEW') {
+          @if (draft(); as d) {
+            <section class="idle-wrap">
+              <div class="pp-card idle-card">
+                <h2>Review parsed bill</h2>
+                <p>{{ d.supplier_name }} &middot; {{ d.invoice_number }} &middot; {{ d.invoice_date }}</p>
+                <table class="review-table">
+                  <thead>
+                    <tr>
+                      <th>Item</th><th>Printed</th><th>Qty</th><th>Free</th><th>Rate</th><th>GST%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (item of editableItems(); track $index) {
+                      <tr [class.low-confidence]="item.ocr_confidence < 0.8" [class.pen-markup]="item.has_pen_markup">
+                        <td><input type="text" [(ngModel)]="item.raw_item_name" /></td>
+                        <td><input type="number" [(ngModel)]="item.printed_qty" /></td>
+                        <td><input type="number" [(ngModel)]="item.billed_qty" /></td>
+                        <td><input type="number" [(ngModel)]="item.free_qty" /></td>
+                        <td><input type="number" step="0.01" [(ngModel)]="item.billed_rate" /></td>
+                        <td><input type="number" step="0.01" [(ngModel)]="item.tax_percent" /></td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+                <div class="idle-actions">
+                  <button class="btn-primary idle-action" (click)="confirmDraft()" [disabled]="busy()">
+                    Confirm &amp; audit
+                  </button>
+                  <button class="btn-ghost idle-action" (click)="reset()" [disabled]="busy()">
+                    Discard draft
+                  </button>
+                </div>
+              </div>
+            </section>
+          }
         }
         @default {
           @if (audit(); as a) {
@@ -419,6 +465,31 @@ const DEMO_FIXTURE_INVOICE_ID = 'demo-golden-fixture-001';
       padding: 44px 42px;
       text-align: center;
     }
+    .review-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      color: var(--muted, #5f6470);
+      cursor: pointer;
+    }
+    .review-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 0.85rem;
+    }
+    .review-table th { text-align: left; padding: 4px 6px; color: var(--muted, #5f6470); }
+    .review-table td { padding: 2px 4px; }
+    .review-table input {
+      width: 100%;
+      padding: 4px 6px;
+      border: 1px solid var(--border, #d8dbe3);
+      border-radius: 6px;
+      font: inherit;
+    }
+    .review-table tr.low-confidence { background: rgba(255, 193, 7, 0.12); }
+    .review-table tr.pen-markup { background: rgba(244, 67, 54, 0.08); }
     .idle-actions {
       display: flex;
       justify-content: center;
@@ -656,6 +727,9 @@ export class CounterComponent implements OnDestroy {
   readonly whatsappOpen = signal(false);
   readonly splitDrawerOpen = signal(false);
   readonly busy = signal(false);
+  readonly reviewMode = signal(false);
+  readonly draft = signal<ScanDraftResponse | null>(null);
+  readonly editableItems = signal<DraftLineItem[]>([]);
   readonly showVoiceTranscript = signal(false);
   readonly transcriptUsesIndicScript = computed(() =>
     /[\u0600-\u06ff\u0900-\u0dff]/u.test(this.audit()?.voice_transcript ?? ''),
@@ -698,12 +772,54 @@ export class CounterComponent implements OnDestroy {
     this.stage.set('PROCESSING');
     this.processingMessage.set('Auditing supplier parcha via Gemini 3.6 Flash…');
     try {
-      const audit = await this.api.scan(file);
-      this.applyAudit(audit);
+      if (this.reviewMode()) {
+        const draft = await this.api.scanDraft(file);
+        this.draft.set(draft);
+        this.editableItems.set(draft.items.map((i) => ({ ...i })));
+        this.stage.set('REVIEW');
+      } else {
+        const audit = await this.api.scan(file);
+        this.applyAudit(audit);
+      }
     } catch (err) {
       console.error('[counter] Bill scan failed', err);
       alert(err instanceof Error ? err.message : 'Bill scan failed');
       this.stage.set('IDLE');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  async confirmDraft(): Promise<void> {
+    const draft = this.draft();
+    if (!draft || this.busy()) {
+      return;
+    }
+    this.busy.set(true);
+    try {
+      const corrections: LineItemCorrection[] = this.editableItems()
+        .map((item, idx) => {
+          const orig = draft.items[idx];
+          const patch: LineItemCorrection = { id: item.id };
+          if (item.raw_item_name !== orig.raw_item_name) patch.raw_item_name = item.raw_item_name;
+          if (item.printed_qty !== orig.printed_qty) patch.printed_qty = item.printed_qty;
+          if (item.billed_qty !== orig.billed_qty) patch.billed_qty = item.billed_qty;
+          if (item.free_qty !== orig.free_qty) patch.free_qty = item.free_qty;
+          if (item.billed_rate !== orig.billed_rate) patch.billed_rate = item.billed_rate;
+          if (item.tax_percent !== orig.tax_percent) patch.tax_percent = item.tax_percent;
+          return patch;
+        })
+        .filter((c) => Object.keys(c).length > 1);
+      const audit = await this.api.confirmReview(draft.invoice_id, {
+        merchant_id: draft.merchant_id,
+        corrections,
+      });
+      this.draft.set(null);
+      this.editableItems.set([]);
+      this.applyAudit(audit);
+    } catch (err) {
+      console.error('[counter] draft confirm failed', err);
+      alert(err instanceof Error ? err.message : 'Confirm failed');
     } finally {
       this.busy.set(false);
     }
@@ -758,6 +874,8 @@ export class CounterComponent implements OnDestroy {
   reset(): void {
     this.stage.set('IDLE');
     this.audit.set(null);
+    this.draft.set(null);
+    this.editableItems.set([]);
     this.showVoiceTranscript.set(false);
     this.payout.set(null);
     this.whatsappOpen.set(false);

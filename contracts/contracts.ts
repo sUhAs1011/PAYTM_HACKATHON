@@ -151,3 +151,59 @@ export interface LoadSampleRequest {
 }
 
 export type ExportFormat = 'tally' | 'marg';
+
+/* ── Opt-in human review mode (additive, not CIS) ────────────────────── */
+
+export interface DraftLineItem {
+  id: string;
+  raw_item_name: string;
+  printed_qty: number;
+  billed_qty: number;
+  free_qty: number;
+  billed_rate: number;
+  tax_percent: number;
+  true_landed_cost?: number;
+  mrp?: number | null;
+  ocr_confidence: number;
+  has_pen_markup: boolean;
+  bounding_box?: number[] | null;
+  canonical_sku_id?: string | null;
+}
+
+export interface ScanDraftResponse {
+  invoice_id: string;
+  merchant_id: string;
+  supplier_name: string;
+  supplier_gstin: string;
+  invoice_number: string;
+  invoice_date: string;
+  billed_total: number;
+  status: string;
+  dispute_crop_url: string;
+  items: DraftLineItem[];
+}
+
+export interface InvoiceDraftReview extends ScanDraftResponse {
+  supplier_id?: string | null;
+}
+
+export interface PendingReviewListResponse {
+  merchant_id: string;
+  drafts: InvoiceDraftReview[];
+}
+
+export interface LineItemCorrection {
+  id: string;
+  raw_item_name?: string;
+  printed_qty?: number;
+  billed_qty?: number;
+  free_qty?: number;
+  billed_rate?: number;
+  tax_percent?: number;
+}
+
+export interface ConfirmCorrectionsRequest {
+  merchant_id: string;
+  corrections: LineItemCorrection[];
+}
+

@@ -98,6 +98,8 @@ async def resolve_parcha(
     existing = await repo.get_loan_for_invoice(client, invoice_id)
     if existing:
         raise HTTPException(status_code=409, detail=f"invoice already resolved (loan {existing['id']})")
+    if invoice.get("status") == repo.INVOICE_STATUS_USER_PENDING_REVIEW:
+        raise HTTPException(status_code=409, detail="invoice is awaiting merchant review — confirm first")
     if invoice.get("status") == "SETTLED":
         raise HTTPException(status_code=409, detail="invoice is SETTLED — nothing to resolve")
 

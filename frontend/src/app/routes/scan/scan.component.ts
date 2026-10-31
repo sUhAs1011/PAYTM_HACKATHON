@@ -1,12 +1,13 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
-import { AuditedInvoiceResponse } from '@contracts/contracts';
+import { AuditedInvoiceResponse, DraftLineItem, LineItemCorrection, ScanDraftResponse } from '@contracts/contracts';
 
 import { ApiService } from '../../services/api.service';
 import { formatINR } from '../../shared/format';
 
-type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
+type ScanStage = 'IDLE' | 'UPLOADING' | 'REVIEW' | 'AUDIT_READY' | 'ERROR';
 
 /**
  * Mobile scanner route (`/scan`) — PRD F1.
@@ -21,7 +22,7 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
 @Component({
   selector: 'app-scan',
   standalone: true,
-  imports: [RouterLink],
+  imports: [FormsModule, RouterLink],
   template: `
     <div class="scan-shell">
       <header class="scan-header">
@@ -58,6 +59,10 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
             <button class="btn-ghost" (click)="loadDemo()" [disabled]="busy()">
               Load Demo Bill (fail-safe)
             </button>
+            <label class="review-toggle">
+              <input type="checkbox" [(ngModel)]="reviewMode" [disabled]="busy()" />
+              Review OCR before audit
+            </label>
             <p class="desktop-hint">
               This is the shopkeeper&rsquo;s phone view. On a laptop, open the
               <a routerLink="/counter">Soundbox counter dashboard &rarr;</a>
@@ -77,6 +82,40 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
             </ul>
             <div class="shimmer" aria-hidden="true"></div>
           </section>
+        }
+        @case ('REVIEW') {
+          @if (draft(); as d) {
+            <section class="pp-card capture-card">
+              <p class="pp-label">Step 2</p>
+              <h2>Review parsed bill</h2>
+              <p class="hint">{{ d.supplier_name }} &middot; {{ d.invoice_number }}</p>
+              <table class="review-table">
+                <thead>
+                  <tr>
+                    <th>Item</th><th>Printed</th><th>Qty</th><th>Free</th><th>Rate</th><th>GST%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (item of editableItems(); track $index) {
+                    <tr [class.low-confidence]="item.ocr_confidence < 0.8" [class.pen-markup]="item.has_pen_markup">
+                      <td><input type="text" [(ngModel)]="item.raw_item_name" /></td>
+                      <td><input type="number" [(ngModel)]="item.printed_qty" /></td>
+                      <td><input type="number" [(ngModel)]="item.billed_qty" /></td>
+                      <td><input type="number" [(ngModel)]="item.free_qty" /></td>
+                      <td><input type="number" step="0.01" [(ngModel)]="item.billed_rate" /></td>
+                      <td><input type="number" step="0.01" [(ngModel)]="item.tax_percent" /></td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+              <button class="capture-btn" (click)="confirmDraft()" [disabled]="busy()">
+                Confirm &amp; audit
+              </button>
+              <button class="btn-ghost" (click)="reset()" [disabled]="busy()">
+                Discard draft
+              </button>
+            </section>
+          }
         }
         @case ('AUDIT_READY') {
           @if (audit(); as a) {
@@ -237,6 +276,32 @@ type ScanStage = 'IDLE' | 'UPLOADING' | 'AUDIT_READY' | 'ERROR';
       background: var(--pp-line);
     }
 
+    .review-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      font-size: 0.85rem;
+      color: var(--muted, #5f6470);
+      cursor: pointer;
+    }
+    .review-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 0.8rem;
+    }
+    .review-table th { text-align: left; padding: 4px 6px; color: var(--muted, #5f6470); }
+    .review-table td { padding: 2px 4px; }
+    .review-table input {
+      width: 100%;
+      padding: 4px 6px;
+      border: 1px solid var(--border, #d8dbe3);
+      border-radius: 6px;
+      font: inherit;
+    }
+    .review-table tr.low-confidence { background: rgba(255, 193, 7, 0.12); }
+    .review-table tr.pen-markup { background: rgba(244, 67, 54, 0.08); }
     .desktop-hint {
       margin: 18px 0 0;
       font-size: 12px;
@@ -438,6 +503,9 @@ export class ScanComponent {
   readonly previewUrl = signal<string | null>(null);
   readonly audit = signal<AuditedInvoiceResponse | null>(null);
   readonly errorMessage = signal<string | null>(null);
+  readonly reviewMode = signal(false);
+  readonly draft = signal<ScanDraftResponse | null>(null);
+  readonly editableItems = signal<DraftLineItem[]>([]);
 
   readonly flaggedCount = computed(() => {
     const a = this.audit();
@@ -486,6 +554,41 @@ export class ScanComponent {
     }
   }
 
+  async confirmDraft(): Promise<void> {
+    const draft = this.draft();
+    if (!draft || this.busy()) {
+      return;
+    }
+    this.busy.set(true);
+    try {
+      const corrections: LineItemCorrection[] = this.editableItems()
+        .map((item, idx) => {
+          const orig = draft.items[idx];
+          const patch: LineItemCorrection = { id: item.id };
+          if (item.raw_item_name !== orig.raw_item_name) patch.raw_item_name = item.raw_item_name;
+          if (item.printed_qty !== orig.printed_qty) patch.printed_qty = item.printed_qty;
+          if (item.billed_qty !== orig.billed_qty) patch.billed_qty = item.billed_qty;
+          if (item.free_qty !== orig.free_qty) patch.free_qty = item.free_qty;
+          if (item.billed_rate !== orig.billed_rate) patch.billed_rate = item.billed_rate;
+          if (item.tax_percent !== orig.tax_percent) patch.tax_percent = item.tax_percent;
+          return patch;
+        })
+        .filter((c) => Object.keys(c).length > 1);
+      const audit = await this.api.confirmReview(draft.invoice_id, {
+        merchant_id: draft.merchant_id,
+        corrections,
+      });
+      this.draft.set(null);
+      this.editableItems.set([]);
+      this.audit.set(audit);
+      this.stage.set('AUDIT_READY');
+    } catch (err) {
+      this.fail(err instanceof Error ? err.message : 'Confirm failed');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
   reset(): void {
     const previous = this.previewUrl();
     if (previous) {
@@ -493,6 +596,8 @@ export class ScanComponent {
     }
     this.previewUrl.set(null);
     this.audit.set(null);
+    this.draft.set(null);
+    this.editableItems.set([]);
     this.errorMessage.set(null);
     this.stage.set('IDLE');
   }
@@ -502,6 +607,14 @@ export class ScanComponent {
     this.stage.set('UPLOADING');
     this.errorMessage.set(null);
     try {
+      if (this.reviewMode()) {
+        const draft = await this.api.scanDraft(file);
+        this.draft.set(draft);
+        this.editableItems.set(draft.items.map((i) => ({ ...i })));
+        this.stage.set('REVIEW');
+        this.busy.set(false);
+        return;
+      }
       const audit = await this.api.scan(file);
       this.audit.set(audit);
       this.stage.set('AUDIT_READY');
