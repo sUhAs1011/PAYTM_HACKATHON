@@ -1,5 +1,6 @@
 import unittest
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.main import app
@@ -32,6 +33,26 @@ class ApiWiringTests(unittest.TestCase):
         with TestClient(app) as client:
             with client.websocket_connect("/ws/counter"):
                 pass
+
+    def test_scan_rejects_missing_demo_auth_before_database_or_pipeline_work(self):
+        settings = SimpleNamespace(
+            demo_auth_enabled=True,
+            demo_auth_username="demo-user",
+            demo_auth_password="test-password",
+        )
+        with (
+            patch("app.core.demo_auth.get_settings", return_value=settings),
+            patch("app.api.scan_router.get_client", new=AsyncMock()) as get_client,
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                "/api/parcha/scan",
+                files={"file": ("bill.jpg", b"synthetic", "image/jpeg")},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Basic", response.headers.get("www-authenticate", ""))
+        get_client.assert_not_awaited()
 
     def test_invalid_uuid_is_rejected_without_database_access(self):
         response = TestClient(app).get("/api/parcha/not-a-uuid/validate")

@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 
 import {
   AuditedInvoiceResponse,
@@ -7,6 +7,8 @@ import {
   ResolveRequest,
   ResolveActionResponse,
 } from '@contracts/contracts';
+
+import { DemoAuthService } from './demo-auth.service';
 
 export const DEMO_MERCHANT_ID = 'a0000000-0000-0000-0000-000000000001';
 const JSON_HEADERS: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -41,6 +43,8 @@ export interface SweepPreviewResponse {
  */
 @Injectable({ providedIn: 'root' })
 export class ApiService {
+  private readonly demoAuth = inject(DemoAuthService);
+
   // -- POST /api/parcha/scan (multipart: file, merchant_id) ------------------
 
   async scan(file: File, merchantId: string = DEMO_MERCHANT_ID): Promise<AuditedInvoiceResponse> {
@@ -48,7 +52,7 @@ export class ApiService {
     form.append('file', file, file.name || 'parcha.jpg');
     form.append('merchant_id', merchantId);
 
-    const res = await fetch('/api/parcha/scan', { method: 'POST', body: form });
+    const res = await this.fetchProtected('/api/parcha/scan', { method: 'POST', body: form });
     if (!res.ok) {
       let errorDetail = `HTTP ${res.status}`;
       try {
@@ -71,7 +75,7 @@ export class ApiService {
 
   async loadSample(sampleId: string = 'sample_pen_edit_01'): Promise<AuditedInvoiceResponse> {
     const body: LoadSampleRequest = { sample_id: sampleId };
-    const res = await fetch('/api/demo/load-sample', {
+    const res = await this.fetchProtected('/api/demo/load-sample', {
       method: 'POST',
       headers: JSON_HEADERS,
       body: JSON.stringify(body),
@@ -99,7 +103,7 @@ export class ApiService {
 
   async resolve(invoiceId: string, tenureDays = 7): Promise<ResolveActionResponse> {
     const body: ResolveRequest = { action: 'APPROVE_SPLIT', tenure_days: tenureDays };
-    const res = await fetch(`/api/parcha/${encodeURIComponent(invoiceId)}/resolve`, {
+    const res = await this.fetchProtected(`/api/parcha/${encodeURIComponent(invoiceId)}/resolve`, {
       method: 'POST',
       headers: JSON_HEADERS,
       body: JSON.stringify(body),
@@ -160,6 +164,38 @@ export class ApiService {
   /** Returns the static crop or asset URL directly from the server. */
   assetUrl(contractUrl: string): string {
     return contractUrl;
+  }
+
+  private async fetchProtected(url: string, init: RequestInit): Promise<Response> {
+    let credential = this.demoAuth.currentCredential();
+    let response = await this.fetchWithCredential(url, init, credential);
+    if (response.status !== 401) return response;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      this.demoAuth.reject(
+        credential
+          ? 'Saved demo credentials were rejected. Enter the correct credentials.'
+          : 'This action requires the demo credentials.',
+      );
+      credential = await this.demoAuth.requestCredential();
+      if (!credential) return response;
+
+      response = await this.fetchWithCredential(url, init, credential);
+      if (response.status !== 401) return response;
+    }
+
+    this.demoAuth.reject('Those credentials were not accepted. Try again.');
+    return response;
+  }
+
+  private fetchWithCredential(
+    url: string,
+    init: RequestInit,
+    credential: string | null,
+  ): Promise<Response> {
+    const headers = new Headers(init.headers);
+    if (credential) headers.set('Authorization', `Basic ${credential}`);
+    return fetch(url, { ...init, headers });
   }
 
   private assertAudited(data: unknown, source: string): asserts data is AuditedInvoiceResponse {

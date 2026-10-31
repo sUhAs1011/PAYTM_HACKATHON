@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: parchapay-ai-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./render.Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PARCHA_DEMO_AUTH_ENABLED
+        value: "true"
+      - key: PARCHA_DEMO_AUTH_USERNAME
+        sync: false
+      - key: PARCHA_DEMO_AUTH_PASSWORD
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: PARCHA_DEMO_MERCHANT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: PARCHA_TRANSLATION_SOURCE_LANGUAGE
+        value: en-IN
+      - key: PARCHA_TRANSLATION_TARGET_LANGUAGE
+        value: hi-IN
+      - key: PARCHA_TTS_LANGUAGE
+        value: hi-IN
+      - key: PARCHA_TTS_SPEAKER
+        value: aparna_hi_customer

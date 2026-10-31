@@ -8,7 +8,8 @@ remain unmounted per the user-approved ledger-contract decision.
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.demo_router import router as demo_router
@@ -82,3 +83,28 @@ async def healthz() -> dict:
         "demo_merchant_configured": bool(settings.demo_merchant_id),
         "supabase_configured": bool(settings.url and settings.secret_key),
     }
+
+
+# Render uses one public web service. When the production image includes the
+# Angular build, serve its SPA routes from this same origin so `/api`, `/static`,
+# and `/ws` continue to work without a separate CORS/proxy configuration.
+frontend_dir = settings.base_dir / "frontend-dist"
+if frontend_dir.is_dir():
+    frontend_root = frontend_dir.resolve()
+
+    @app.get("/", include_in_schema=False)
+    async def frontend_index() -> FileResponse:
+        return FileResponse(frontend_root / "index.html")
+
+    @app.get("/{frontend_path:path}", include_in_schema=False)
+    async def frontend_spa_fallback(frontend_path: str) -> FileResponse:
+        first_segment = frontend_path.partition("/")[0]
+        if first_segment in {"api", "static", "ws"}:
+            raise HTTPException(status_code=404, detail="not found")
+
+        candidate = (frontend_root / frontend_path).resolve()
+        if not candidate.is_relative_to(frontend_root):
+            raise HTTPException(status_code=404, detail="not found")
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(frontend_root / "index.html")

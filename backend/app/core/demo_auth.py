@@ -19,12 +19,10 @@ def require_demo_auth(
     if not settings.demo_auth_enabled:
         return
 
-    username_ok = credentials is not None and secrets.compare_digest(
-        credentials.username, settings.demo_auth_username
-    )
-    password_ok = credentials is not None and secrets.compare_digest(
-        credentials.password, settings.demo_auth_password
-    )
+    username = credentials.username if credentials is not None else ""
+    password = credentials.password if credentials is not None else ""
+    username_ok = secrets.compare_digest(username, settings.demo_auth_username)
+    password_ok = secrets.compare_digest(password, settings.demo_auth_password)
     if not (username_ok and password_ok):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -10,4 +10,5 @@
 backend/static/crops/*
 backend/static/audio/*
 !backend/static/crops/.gitkeep
+!backend/static/crops/demo_pen_edit.jpg
 !backend/static/audio/.gitkeep

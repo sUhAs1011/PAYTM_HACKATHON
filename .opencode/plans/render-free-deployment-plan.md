@@ -1,6 +1,6 @@
 # Render Free Demo Deployment + Basic Auth Plan
 
-**Date:** 2026-10-31 · **Status:** draft; awaiting user approval · **Scope:** public hackathon demo only
+**Date:** 2026-10-31 · **Status:** approved; implementation complete locally, Render deployment pending · **Scope:** public hackathon demo only
 
 ## 1. Scope & Non-Goals
 
