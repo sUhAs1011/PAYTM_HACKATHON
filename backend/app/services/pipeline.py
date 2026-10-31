@@ -24,7 +24,7 @@ from app.core.money import as_float, dec, q2
 from app.services.credit_rules import get_credit_rules
 from app.services.gemini_vision import extract_invoice_from_image
 from app.services.pillow_cropper import crop_pen_markup
-from app.services.sarvam_tts import synthesize_alert
+from app.services.sarvam_tts import synthesize_alert, translate_alert
 
 logger = logging.getLogger("parchapay.api.pipeline")
 
@@ -296,11 +296,15 @@ class LiveParchaPipeline:
             approved_total,
             credit,
         )
-        generated_audio_url = await run_in_threadpool(
-            synthesize_alert, transcript, invoice_id
-        )
+        translated_transcript = await run_in_threadpool(translate_alert, transcript)
+        voice_transcript = translated_transcript or transcript
+        generated_audio_url = None
+        if translated_transcript is not None:
+            generated_audio_url = await run_in_threadpool(
+                synthesize_alert, voice_transcript, invoice_id
+            )
         # Preserve the existing browser transcript fallback when config or the
-        # external Sarvam call is unavailable.
+        # external Sarvam translation/TTS call is unavailable.
         audio_url = generated_audio_url or "/static/audio/demo_alert.wav"
         response = AuditedInvoiceResponse(
             invoice_id=invoice_id,
@@ -313,7 +317,7 @@ class LiveParchaPipeline:
             overcharge_amount=as_float(overcharge_total),
             audio_alert_url=audio_url,
             dispute_crop_url=crop_url,
-            voice_transcript=transcript,
+            voice_transcript=voice_transcript,
             items=response_items,
             gst_ims_shield=GstImsShield(
                 status="SHIELD_READY",

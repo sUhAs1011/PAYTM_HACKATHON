@@ -62,7 +62,7 @@ This reference guide contains everything needed to configure, run, and demonstra
                                                 • 7-Day QR Split Schedule
 ```
 
-**Current integration notes:** uploaded scans use Gemini 3.6 Flash, Pillow, Decimal auditing, Supabase persistence, and (when `SARVAM_API_KEY` is configured) Sarvam Bulbul v4 Flash TTS. `PARCHA_TTS_LANGUAGE` defaults to `hi-IN`; generated audio is returned through `/static/audio/`. Missing key/provider failure keeps the transcript speech fallback. The current local `.env` has no key yet, so Sarvam playback is pending a rotated key and live smoke check. TTS has a 5-second request timeout and can extend scan response time. `load-sample` remains fixture-verbatim; resolve is REST-only and does not emit `PAYOUT_APPROVED` because the frontend applies the REST response. The Autopay badge is a demo flag, not a live mandate.
+**Current integration notes:** uploaded scans use Gemini 3.6 Flash, Pillow, Decimal auditing, Supabase persistence, and (when `SARVAM_API_KEY` is configured) Sarvam Bulbul v4 Flash TTS. Voice alerts are translated from `PARCHA_TRANSLATION_SOURCE_LANGUAGE` (default `en-IN`) to `PARCHA_TRANSLATION_TARGET_LANGUAGE` (default `hi-IN`), then spoken with Bulbul v4 Flash using `PARCHA_TTS_LANGUAGE` (must match target) and explicit `PARCHA_TTS_SPEAKER` (default `aparna_hi_customer`). Numeric and invoice tokens are preserved through translation. Translation failure retains the source transcript; TTS failure leaves the localized transcript for browser speech fallback. Translation and TTS each use a 5-second timeout and run sequentially, so localization can extend scan latency. `load-sample` preserves fixture audit/financial values and localizes voice fields when Sarvam is available; resolve is REST-only and does not emit `PAYOUT_APPROVED` because the frontend applies the REST response. The Autopay badge is a demo flag, not a live mandate.
 
 ### Flow Details
 1. **State 1: IDLE**
@@ -75,7 +75,7 @@ This reference guide contains everything needed to configure, run, and demonstra
    * Laptop Soundbox screen immediately animates with a laser-sweep: `"Auditing Parcha... Gemini 3.6 Flash / Decimal audit / Mandi-Pulse"`.
 3. **State 3: AUDIT ALERT**
    * Realtime WebSocket pushes `{"event": "AUDIT_COMPLETE"}`.
-    * **Voice Alert:** Once a rotated `SARVAM_API_KEY` is set in root `.env`, the Soundbox plays generated Hindi WAV audio. Without a valid key or when the provider fails, use the tap-to-speak browser transcript fallback.
+    * **Voice Alert:** Sarvam translates the deterministic alert to the configured target language and Bulbul v4 Flash synthesizes it. Without a valid key or when translation fails, the source transcript remains; if TTS fails after translation, the localized transcript is used by the tap-to-speak browser fallback.
    * **Front Screen:** Shows red overcharge warning `⚠ Overcharge ₹140 · Pay ₹13,860`.
    * **Audit Table:** Shows red row for Fortune Oil (rate hike + pen edit from 12 to 10), yellow row for Parle-G (76% OCR confidence review), Mandi-Pulse benchmark badge, and pen strikethrough crop.
 4. **State 4: RESOLVED & FINANCED**

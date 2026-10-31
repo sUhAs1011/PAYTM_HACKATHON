@@ -931,22 +931,43 @@ export class SoundboxTwinComponent implements OnDestroy {
     this.needsTapToPlay.set(false);
     if (!('speechSynthesis' in window)) {
       return;
-    }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(audit.voice_transcript);
-    const voices = window.speechSynthesis.getVoices();
-    const voice =
-      voices.find((v) => v.lang === 'en-IN') ??
-      voices.find((v) => v.lang === 'hi-IN') ??
-      voices.find((v) => v.lang?.startsWith('en'));
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(audit.voice_transcript);
+    utterance.lang = this.speechLanguageForText(audit.voice_transcript);
+    const voices = window.speechSynthesis.getVoices();
+    const language = utterance.lang.toLowerCase();
+    const languagePrefix = language.split('-')[0];
+    const voice =
+      voices.find((v) => v.lang.toLowerCase() === language) ??
+      voices.find((v) => v.lang.toLowerCase().startsWith(`${languagePrefix}-`)) ??
+      voices.find((v) => v.lang?.startsWith('en'));
     if (voice) {
       utterance.voice = voice;
     }
     utterance.rate = 1.02;
     utterance.onend = () => this.speaking.set(false);
-    this.speaking.set(true);
-    window.speechSynthesis.speak(utterance);
-  }
+    this.speaking.set(true);
+    window.speechSynthesis.speak(utterance);
+  }
+
+  /** Infer the browser fallback locale from the translated transcript script. */
+  private speechLanguageForText(text: string): string {
+    const codePoints = Array.from(text, (char) => char.codePointAt(0) ?? 0);
+    const includesScript = (start: number, end: number) =>
+      codePoints.some((point) => point >= start && point <= end);
+
+    if (includesScript(0x0900, 0x097f)) return 'hi-IN';
+    if (includesScript(0x0980, 0x09ff)) return 'bn-IN';
+    if (includesScript(0x0a00, 0x0a7f)) return 'pa-IN';
+    if (includesScript(0x0a80, 0x0aff)) return 'gu-IN';
+    if (includesScript(0x0b00, 0x0b7f)) return 'od-IN';
+    if (includesScript(0x0b80, 0x0bff)) return 'ta-IN';
+    if (includesScript(0x0c00, 0x0c7f)) return 'te-IN';
+    if (includesScript(0x0c80, 0x0cff)) return 'kn-IN';
+    if (includesScript(0x0d00, 0x0d7f)) return 'ml-IN';
+    return 'en-IN';
+  }
 
   private stopAudio(): void {
     this.speaking.set(false);

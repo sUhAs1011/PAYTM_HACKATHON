@@ -66,6 +66,28 @@ class ApiWiringTests(unittest.TestCase):
         self.assertEqual(payload["loan_schedule"]["remaining_balance"], 11880.0)
         get_client.assert_not_awaited()
 
+    def test_sample_localizes_only_voice_fields(self):
+        translated = "शर्माजी का बिल जाँचा गया है।"
+        audio_url = "/static/audio/alert_demo-fixture.wav"
+        with (
+            patch("app.api.demo_router.translate_alert", return_value=translated) as translate,
+            patch("app.api.demo_router.synthesize_alert", return_value=audio_url) as synthesize,
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                "/api/demo/load-sample", json={"sample_id": "sample_pen_edit_01"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["voice_transcript"], translated)
+        self.assertEqual(payload["audio_alert_url"], audio_url)
+        self.assertEqual(payload["billed_total"], 14000.0)
+        self.assertEqual(payload["approved_total"], 13860.0)
+        self.assertEqual(payload["items"][0]["billed_qty"], 10)
+        translate.assert_called_once()
+        synthesize.assert_called_once_with(translated, "demo-golden-fixture-001")
+
     def test_sweep_preview_rejects_invalid_invoice_uuid_without_database_access(self):
         response = TestClient(app).get("/api/credit/not-a-uuid/sweep-preview")
         self.assertEqual(response.status_code, 422)

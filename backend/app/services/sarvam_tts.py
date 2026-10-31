@@ -1,6 +1,6 @@
-"""Sarvam Bulbul speech synthesis for the Soundbox alert.
+"""Sarvam translation and Bulbul speech synthesis for Soundbox alerts.
 
-Failure is intentionally non-fatal: the caller keeps the transcript and the
+Failure is intentionally non-fatal: callers keep a safe transcript and the
 frontend can fall back to browser speech synthesis.
 """
 
@@ -16,8 +16,74 @@ from app.core.config import get_settings
 logger = logging.getLogger("parchapay.api.sarvam_tts")
 
 MODEL = "bulbul:v4-flash"
+TRANSLATION_MODEL = "mayura:v1"
+TRANSLATION_MODE = "modern-colloquial"
+MAX_TRANSLATION_CHARS = 1000
 MAX_TEXT_CHARS = 2500
 REQUEST_TIMEOUT_SECONDS = 5.0
+_PROTECTED_VALUE = re.compile(
+    r"\bINV-[A-Z0-9-]+\b|(?<![A-Z0-9])\d[\d,]*(?:\.\d+)?(?![A-Z0-9])",
+    re.IGNORECASE,
+)
+
+
+def translate_alert(transcript: str) -> Optional[str]:
+    """Translate the deterministic alert into the configured spoken language.
+
+    Numeric values and invoice identifiers are replaced with checked tokens
+    during translation, then restored byte-for-byte. Translation failure is
+    non-fatal and returns None so callers do not send source-language text to
+    a mismatched TTS language.
+    """
+    settings = get_settings()
+    text = (transcript or "").strip()
+    if not text or len(text) > MAX_TRANSLATION_CHARS:
+        logger.warning("Sarvam translation skipped reason=invalid_text length=%d", len(text))
+        return None
+    if settings.translation_source_language.casefold() == settings.translation_target_language.casefold():
+        return text
+    if not settings.sarvam_api_key:
+        logger.info("Sarvam translation skipped reason=missing_api_key")
+        return None
+
+    protected_values: list[tuple[str, str]] = []
+
+    def protect(match: re.Match[str]) -> str:
+        token = f"ZQXNUM{len(protected_values):03d}QXZ"
+        protected_values.append((token, match.group(0)))
+        return token
+
+    protected_text = _PROTECTED_VALUE.sub(protect, text)
+    try:
+        from sarvamai import SarvamAI
+
+        client = SarvamAI(
+            api_subscription_key=settings.sarvam_api_key,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response = client.text.translate(
+            input=protected_text,
+            source_language_code=settings.translation_source_language,
+            target_language_code=settings.translation_target_language,
+            model=TRANSLATION_MODEL,
+            mode=TRANSLATION_MODE,
+            output_script="fully-native",
+        )
+        translated = (getattr(response, "translated_text", None) or "").strip()
+        if not translated:
+            logger.warning("Sarvam translation returned empty text")
+            return None
+
+        for token, original_value in protected_values:
+            if translated.count(token) != 1:
+                logger.warning("Sarvam translation rejected reason=numeric_token_mismatch")
+                return None
+            translated = translated.replace(token, original_value)
+        return translated
+    except Exception as exc:
+        # SDK exceptions may contain provider response details; log type only.
+        logger.warning("Sarvam translation failed error_type=%s", type(exc).__name__)
+        return None
 
 
 def synthesize_alert(transcript: str, invoice_id: str) -> Optional[str]:
@@ -48,6 +114,7 @@ def synthesize_alert(transcript: str, invoice_id: str) -> Optional[str]:
             text=text,
             model=MODEL,
             language_code=settings.tts_language,
+            speaker=settings.tts_speaker,
             output_audio_codec="wav",
             speech_sample_rate=24000,
         )

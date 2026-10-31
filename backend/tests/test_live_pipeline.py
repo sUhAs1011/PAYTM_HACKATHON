@@ -138,6 +138,10 @@ class LivePipelineTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.services.pipeline.get_credit_rules", return_value=fake_credit_rules),
             patch(
+                "app.services.pipeline.translate_alert",
+                side_effect=lambda text: f"हिंदी: {text}",
+            ) as translate_alert,
+            patch(
                 "app.services.pipeline.synthesize_alert",
                 side_effect=["/static/audio/alert_test.wav", None],
             ) as synthesize_alert,
@@ -170,6 +174,7 @@ class LivePipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[1].discrepancy_type, "LOW_CONFIDENCE_REVIEW")
         self.assertEqual(response.split_credit_pre_approval.daily_deduction_amount, 381.00)
         self.assertEqual(response.audio_alert_url, "/static/audio/alert_test.wav")
+        self.assertTrue(response.voice_transcript.startswith("हिंदी: "))
         self.assertIn("2 lines need review", response.voice_transcript)
         self.assertIn("rupees 2,667", response.voice_transcript)
         self.assertIn("rupees 381", response.voice_transcript)
@@ -178,6 +183,7 @@ class LivePipelineTests(unittest.IsolatedAsyncioTestCase):
             synthesize_alert.call_args_list[0].args,
             (response.voice_transcript, response.invoice_id),
         )
+        self.assertEqual(translate_alert.call_count, 2)
         self.assertEqual(fallback_response.audio_alert_url, "/static/audio/demo_alert.wav")
         self.assertEqual(synthesize_alert.call_count, 2)
 

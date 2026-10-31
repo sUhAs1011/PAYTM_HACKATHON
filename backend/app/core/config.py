@@ -1,4 +1,4 @@
-"""Runtime settings shared by the API, Gemini client, and cropper.
+"""Runtime settings shared by the API, Gemini, and Sarvam voice pipeline.
 
 Settings are loaded from the repo-root `.env` for host runs and from Compose's
 backend environment for container runs. Secrets are never checked into this
@@ -35,7 +35,10 @@ class Settings:
     demo_merchant_id: str
     gemini_api_key: str
     sarvam_api_key: str
+    translation_source_language: str
+    translation_target_language: str
     tts_language: str
+    tts_speaker: str
     environment: str
     base_dir: Path
     static_dir: Path
@@ -44,13 +47,25 @@ class Settings:
     def from_env(cls) -> "Settings":
         backend_dir = Path(__file__).resolve().parents[2]
         api_key = os.environ.get("GEMINI_API_KEY", "").strip().strip("\"'")
+        tts_language = os.environ.get("PARCHA_TTS_LANGUAGE", "hi-IN").strip() or "hi-IN"
+        translation_target_language = (
+            os.environ.get("PARCHA_TRANSLATION_TARGET_LANGUAGE", tts_language).strip() or tts_language
+        )
+        if translation_target_language.casefold() != tts_language.casefold():
+            raise ValueError("PARCHA_TRANSLATION_TARGET_LANGUAGE must match PARCHA_TTS_LANGUAGE")
         return cls(
             url=os.environ.get("SUPABASE_URL", "").strip(),
             secret_key=os.environ.get("SUPABASE_SECRET_KEY", "").strip(),
             demo_merchant_id=os.environ.get("PARCHA_DEMO_MERCHANT_ID", "").strip(),
             gemini_api_key=api_key,
             sarvam_api_key=os.environ.get("SARVAM_API_KEY", "").strip().strip("\"'"),
-            tts_language=os.environ.get("PARCHA_TTS_LANGUAGE", "hi-IN").strip() or "hi-IN",
+            translation_source_language=(
+                os.environ.get("PARCHA_TRANSLATION_SOURCE_LANGUAGE", "en-IN").strip() or "en-IN"
+            ),
+            translation_target_language=translation_target_language,
+            tts_language=tts_language,
+            tts_speaker=os.environ.get("PARCHA_TTS_SPEAKER", "aparna_hi_customer").strip()
+            or "aparna_hi_customer",
             environment=os.environ.get("ENVIRONMENT", "development").strip(),
             base_dir=backend_dir,
             static_dir=backend_dir / "static",
