@@ -42,7 +42,7 @@ This reference guide contains everything needed to configure, run, and demonstra
       ▼                                     │
 [FastAPI Gateway] ──► [WebSocket Broadcast: SCAN_STARTED (<0.5s)]
       │
-      ├──► [Gemini 2.5 Flash VLM] ──► Pillow Cropper ──► /static/crops/
+      ├──► [Gemini 3.8 Flash VLM] ──► Pillow Cropper ──► /static/crops/
       │          │ (Raw JSON + Bounding Boxes)
       │          ▼
       ├──► [Deterministic Python Engine (Decimal)]
@@ -72,7 +72,7 @@ This reference guide contains everything needed to configure, run, and demonstra
    * Merchant snaps photo of the paper parcha on their phone.
    * The phone sends `POST /api/parcha/scan`.
    * Realtime WebSocket pushes `{"event": "SCAN_STARTED"}` to the laptop.
-   * Laptop Soundbox screen immediately animates with a laser-sweep: `"Auditing Parcha... Gemini 2.5 Flash / Decimal audit / Mandi-Pulse"`.
+   * Laptop Soundbox screen immediately animates with a laser-sweep: `"Auditing Parcha... Gemini 3.8 Flash / Decimal audit / Mandi-Pulse"`.
 3. **State 3: AUDIT ALERT**
    * Realtime WebSocket pushes `{"event": "AUDIT_COMPLETE"}`.
    * **Voice Alert:** Soundbox speaks aloud: *"Sharmaji Wholesale bill checked. Oil rate up by Rs 6, pen math error of Rs 140. Pay Rs 13,860."*

@@ -1,7 +1,7 @@
 # Suhas's Module Implementation & Integration Guide
 
 **Owner:** Suhas  
-**Scope:** Module 3 (Gemini 2.5 Flash Vision Extraction & Pillow Visual Dispute Cropper) + Core API Gateway & Realtime Bridge (FastAPI, WebSocket `/ws/counter`, Shared Contracts)  
+**Scope:** Module 3 (Gemini Vision Extraction & Pillow Visual Dispute Cropper) + Core API Gateway & Realtime Bridge (FastAPI, WebSocket `/ws/counter`, Shared Contracts)  
 **Target Event:** Paytm Build for India 2026 (Track 1)  
 
 ---
@@ -11,7 +11,7 @@
 This document specifies the exact architecture, data models, file changes, and integration points implemented for the **Vision & Ingress Pipeline** of ParchaPay AI. 
 
 The goal of this implementation was to:
-1. Replace all mock/hardcoded vision extraction with live **Gemini 2.5 Flash Multimodal VLM** using structured outputs (`google-genai` SDK).
+1. Replace all mock/hardcoded vision extraction with live **Gemini 3.8 Flash Multimodal VLM** using structured outputs (`google-genai` SDK 2.22+).
 2. Accurately detect handwritten Indian wholesale delivery edits (strikethroughs such as `~~12~~` corrected to `10`) and extract normalized 0-1000 2D bounding boxes.
 3. Automatically generate a high-context, AI-annotated dispute crop using **Pillow** (`/static/crops/pen_edit_{invoice_id}.jpg`) for WhatsApp dispute proofs and the counter UI.
 4. Establish the **FastAPI gateway and WebSocket bridge** (`/ws/counter`) that drives the Angular 19 frontend (`/counter` and `/scan`) in real-time.
@@ -31,7 +31,7 @@ backend/
 │   │   ├── config.py             # Environment config (sanitizes GEMINI_API_KEY)
 │   │   └── ws_manager.py         # Realtime WebSocket manager for /ws/counter
 │   ├── services/
-│   │   ├── gemini_vision.py      # Gemini 2.5 Flash structured VLM extraction
+│   │   ├── gemini_vision.py      # Gemini 3.8 Flash structured VLM extraction
 │   │   └── pillow_cropper.py     # 75% row-context Pillow cropper + AI badge
 │   ├── contracts.py              # Symlink/bridge to contracts/contracts.py
 │   └── main.py                   # FastAPI app mounting routers, WS, and /static
@@ -44,7 +44,7 @@ contracts/
 ## 3. Component Details & Internal Logic
 
 ### 3.1. Vision Extraction (`gemini_vision.py`)
-- **Model:** `gemini-2.5-flash` via the official `google-genai` SDK.
+- **Model:** `gemini-3.8-flash` via the official `google-genai` SDK (minimum 2.22.0).
 - **Structured Schema:** Uses Pydantic schema `RawExtractedInvoice` passed directly into `response_schema`.
 - **System Prompt Specialization:**
   - Designed for Indian wholesale delivery parchas, challans, and cash memos.

@@ -1,7 +1,7 @@
 """ParchaPay AI — Shared Pydantic contracts for FastAPI backend (Modules 2, 3, 4).
 
 Source of truth: Engineering Document Part 2 — Core Interoperability
-Specification (CIS) §3 (Gemini 2.5 Flash Vision Contract) and §4 (REST + WebSocket).
+Specification (CIS) §3 (originally authored for Gemini 2.5 Flash) and §4 (REST + WebSocket).
 
 IMMUTABLE: field names and casing mirror the CIS payloads and TypeScript contracts exactly.
 """
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
-# CIS §3: Gemini 2.5 Flash Structured Vision Contract
+# CIS §3 structured vision contract; consumed by the Gemini 3.8 Flash runtime.
 # ---------------------------------------------------------------------------
 
 class BoundingBox2D(BaseModel):

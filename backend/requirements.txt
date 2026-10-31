@@ -3,6 +3,6 @@ uvicorn[standard]>=0.32,<1
 pydantic>=2.10,<3
 python-multipart>=0.0.18
 pillow>=11,<12
-google-genai>=1,<2
+google-genai>=2.22,<3
 httpx>=0.28,<1
 supabase>=2.10,<3

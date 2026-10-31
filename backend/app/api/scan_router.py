@@ -41,7 +41,7 @@ async def scan_parcha(
     file: UploadFile = File(...),
     merchant_id: str = Form("a0000000-0000-0000-0000-000000000001"),
 ):
-    """Ingests bill image, notifies WebSocket immediately, runs Gemini 2.5 Flash,
+    """Ingests bill image, notifies WebSocket immediately, runs Gemini 3.8 Flash,
 
     crops pen edits with Pillow, computes True Landed Cost, and broadcasts audit.
     """
@@ -55,14 +55,14 @@ async def scan_parcha(
             "session_id": session_id,
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "status": "PROCESSING_IMAGE",
-            "message": "Auditing supplier parcha via Gemini 2.5 Flash...",
+            "message": "Auditing supplier parcha via Gemini 3.8 Flash...",
         },
     )
 
     image_bytes = await file.read()
     mime_type = file.content_type or "image/jpeg"
 
-    # Step 2: Real Gemini 2.5 Flash Multimodal Vision Extraction
+    # Step 2: Real Gemini 3.8 Flash Multimodal Vision Extraction
     try:
         raw_invoice = extract_invoice_from_image(image_bytes, mime_type=mime_type)
     except Exception as exc:

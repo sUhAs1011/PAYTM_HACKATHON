@@ -1,6 +1,6 @@
 """ParchaPay AI — FastAPI Gateway & Realtime Broadcaster.
 
-Orchestrates multimodal bill intake, Gemini 2.5 Flash extraction,
+Orchestrates multimodal bill intake, Gemini 3.8 Flash extraction,
 Pillow pen cropping, static asset serving, and WebSocket broadcasting.
 """
 
