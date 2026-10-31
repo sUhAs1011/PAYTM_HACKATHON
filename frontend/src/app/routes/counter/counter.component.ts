@@ -2,7 +2,13 @@ import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 
-import { AuditCompleteData, PayoutApprovedData } from '@contracts/contracts';
+import {
+  AuditCompleteData,
+  DraftLineItem,
+  LineItemCorrection,
+  PayoutApprovedData,
+  ScanDraftResponse,
+} from '@contracts/contracts';
 
 import { AuditTableComponent } from '../../components/audit-table/audit-table.component';
 import { SoundboxTwinComponent } from '../../components/soundbox-twin/soundbox-twin.component';
