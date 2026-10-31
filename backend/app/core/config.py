@@ -34,6 +34,8 @@ class Settings:
     secret_key: str
     demo_merchant_id: str
     gemini_api_key: str
+    sarvam_api_key: str
+    tts_language: str
     environment: str
     base_dir: Path
     static_dir: Path
@@ -47,6 +49,8 @@ class Settings:
             secret_key=os.environ.get("SUPABASE_SECRET_KEY", "").strip(),
             demo_merchant_id=os.environ.get("PARCHA_DEMO_MERCHANT_ID", "").strip(),
             gemini_api_key=api_key,
+            sarvam_api_key=os.environ.get("SARVAM_API_KEY", "").strip().strip("\"'"),
+            tts_language=os.environ.get("PARCHA_TTS_LANGUAGE", "hi-IN").strip() or "hi-IN",
             environment=os.environ.get("ENVIRONMENT", "development").strip(),
             base_dir=backend_dir,
             static_dir=backend_dir / "static",

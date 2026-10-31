@@ -7,3 +7,4 @@ google-genai>=1,<2
 httpx>=0.28,<1
 supabase>=2.10,<3
 python-dotenv>=1,<2
+sarvamai>=0.1.41,<0.2

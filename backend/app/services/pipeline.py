@@ -8,10 +8,9 @@ REST response and AUDIT_COMPLETE event are returned/broadcast.
 
 import asyncio
 import logging
-import re
+from collections import Counter
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from pathlib import Path
 from typing import Optional, Protocol
 from uuid import uuid4
 
@@ -25,6 +24,7 @@ from app.core.money import as_float, dec, q2
 from app.services.credit_rules import get_credit_rules
 from app.services.gemini_vision import extract_invoice_from_image
 from app.services.pillow_cropper import crop_pen_markup
+from app.services.sarvam_tts import synthesize_alert
 
 logger = logging.getLogger("parchapay.api.pipeline")
 
@@ -275,15 +275,23 @@ class LiveParchaPipeline:
         overcharge_total = q2(overcharge_total)
         billed_total = q2(dec(extracted.printed_grand_total))
         credit = await get_credit_rules().plan(merchant, approved_total, 7)
-        audio_url = "/static/audio/demo_alert.wav"  # absent until Sarvam TTS is integrated; UI speaks transcript fallback
         invoice_number = extracted.invoice_number or f"INV-{invoice_date.year}-{uuid4().hex[:6].upper()}"
         deadline = _ims_deadline(invoice_date)
         flag_reason = "; ".join(issue_summaries) or "Invoice math verified; no flagged line items"
-        transcript = (
-            f"{extracted.supplier_name} bill checked. "
-            f"Line-item overcharge of Rs {as_float(overcharge_total):.2f}. "
-            f"Recommended payout is Rs {as_float(approved_total):.2f}."
+        transcript = _build_voice_transcript(
+            extracted.supplier_name,
+            invoice_number,
+            response_items,
+            overcharge_total,
+            approved_total,
+            credit,
         )
+        generated_audio_url = await run_in_threadpool(
+            synthesize_alert, transcript, invoice_id
+        )
+        # Preserve the existing browser transcript fallback when config or the
+        # external Sarvam call is unavailable.
+        audio_url = generated_audio_url or "/static/audio/demo_alert.wav"
         response = AuditedInvoiceResponse(
             invoice_id=invoice_id,
             supplier_name=extracted.supplier_name,
@@ -366,6 +374,13 @@ class LiveParchaPipeline:
                     crop_file.unlink(missing_ok=True)
                 except OSError:
                     logger.warning("could not remove orphaned scan crop")
+            audio_url = invoice_row.get("audio_alert_url") or ""
+            if audio_url.startswith("/static/audio/alert_"):
+                audio_file = get_settings().static_dir / audio_url.removeprefix("/static/")
+                try:
+                    audio_file.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("could not remove orphaned scan audio")
             raise
 
 
@@ -429,3 +444,70 @@ def _peer_band(peer_rates: list[tuple[str, object]]) -> str:
 def _format_rupees(value: Decimal) -> str:
     rounded = value.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     return format(rounded, "f")
+
+
+def _build_voice_transcript(
+    supplier_name: str,
+    invoice_number: str,
+    items: list[AuditedItem],
+    overcharge: Decimal,
+    approved_total: Decimal,
+    credit,
+) -> str:
+    """Create a short, deterministic Soundbox summary from audited values."""
+    flagged = [item for item in items if item.discrepancy_type != "NONE"]
+    reasons: Counter[str] = Counter()
+    reason_labels = {
+        "RATE_HIKE": "a price increase",
+        "PEN_EDIT": "a handwritten quantity correction",
+        "MATH_ERROR": "a line-total mismatch",
+        "LOW_MARGIN": "a low-margin item",
+        "LOW_CONFIDENCE_REVIEW": "low OCR confidence",
+    }
+    for item in flagged:
+        for code in item.discrepancy_type.split(";"):
+            if code == "RATE_HIKE_AND_PEN_ERROR":
+                reasons["a price increase"] += 1
+                reasons["a handwritten quantity correction"] += 1
+                continue
+            label = reason_labels.get(code)
+            if label:
+                reasons[label] += 1
+
+    if flagged:
+        review_summary = f"{len(flagged)} line{'s' if len(flagged) != 1 else ''} need review"
+        if reasons:
+            review_summary += f", mainly due to {reasons.most_common(1)[0][0]}"
+        review_summary += f"; itemized overcharge is rupees {_format_indian_rupees(overcharge)}."
+    else:
+        review_summary = "No line items were flagged."
+
+    payout_summary = f"Recommended payout is rupees {_format_indian_rupees(approved_total)}"
+    if credit.is_eligible:
+        payout_summary += (
+            f", with a day-one QR split of rupees "
+            f"{_format_indian_rupees(credit.daily_deduction)}."
+        )
+    else:
+        payout_summary += ", but split credit is not eligible."
+
+    return (
+        f"{supplier_name}, invoice {invoice_number}, is checked. "
+        f"{review_summary} "
+        f"{payout_summary}"
+    )
+
+
+def _format_indian_rupees(value: Decimal) -> str:
+    """Round to whole rupees and format grouping for speech (e.g. 1,23,456)."""
+    rounded = int(value.copy_abs().quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    digits = str(rounded)
+    if len(digits) <= 3:
+        grouped = digits
+    else:
+        grouped = digits[-3:]
+        digits = digits[:-3]
+        while digits:
+            grouped = digits[-2:] + "," + grouped
+            digits = digits[:-2]
+    return f"minus {grouped}" if value < 0 else grouped

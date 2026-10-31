@@ -91,7 +91,10 @@ class LivePipelineTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.price_analysis.db.query.get_supplier_history",
                 new=AsyncMock(
-                    side_effect=[[{"billed_rate": "128.00"}], []]
+                    side_effect=[
+                        [{"billed_rate": "128.00"}], [],
+                        [{"billed_rate": "128.00"}], [],
+                    ]
                 ),
             ),
             patch(
@@ -100,15 +103,26 @@ class LivePipelineTests(unittest.IsolatedAsyncioTestCase):
                     side_effect=[
                         [(f"peer-{i}", str(126 + i)) for i in range(5)],
                         [],
+                        [(f"peer-{i}", str(126 + i)) for i in range(5)],
+                        [],
                     ]
                 ),
             ),
             patch("app.services.pipeline.get_credit_rules", return_value=fake_credit_rules),
+            patch(
+                "app.services.pipeline.synthesize_alert",
+                side_effect=["/static/audio/alert_test.wav", None],
+            ) as synthesize_alert,
             patch("app.services.pipeline.repo.insert_invoice", new=AsyncMock()) as insert_invoice,
             patch("app.services.pipeline.repo.insert_invoice_line_items", new=AsyncMock()) as insert_lines,
             patch("app.services.pipeline.repo.insert_ims_record", new=AsyncMock()) as insert_ims,
         ):
             response = await LiveParchaPipeline().extract_and_audit(
+                b"fake-bill-bytes",
+                "image/jpeg",
+                {"id": "merchant-1", "pincode": "560103", "upi_vpa": "shop@paytm"},
+            )
+            fallback_response = await LiveParchaPipeline().extract_and_audit(
                 b"fake-bill-bytes",
                 "image/jpeg",
                 {"id": "merchant-1", "pincode": "560103", "upi_vpa": "shop@paytm"},
@@ -127,16 +141,28 @@ class LivePipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[1].true_landed_cost, 210.00)
         self.assertEqual(response.items[1].discrepancy_type, "LOW_CONFIDENCE_REVIEW")
         self.assertEqual(response.split_credit_pre_approval.daily_deduction_amount, 381.00)
+        self.assertEqual(response.audio_alert_url, "/static/audio/alert_test.wav")
+        self.assertIn("2 lines need review", response.voice_transcript)
+        self.assertIn("rupees 2,667", response.voice_transcript)
+        self.assertIn("rupees 381", response.voice_transcript)
+        self.assertLessEqual(response.voice_transcript.count("."), 3)
+        self.assertEqual(
+            synthesize_alert.call_args_list[0].args,
+            (response.voice_transcript, response.invoice_id),
+        )
+        self.assertEqual(fallback_response.audio_alert_url, "/static/audio/demo_alert.wav")
+        self.assertEqual(synthesize_alert.call_count, 2)
 
-        invoice_row = insert_invoice.await_args.args[1]
+        invoice_row = insert_invoice.await_args_list[0].args[1]
         self.assertEqual(invoice_row["approved_total"], "2667.00")
+        self.assertEqual(invoice_row["audio_alert_url"], "/static/audio/alert_test.wav")
         self.assertEqual(invoice_row["billed_total"], "2948.40")
-        rows = insert_lines.await_args.args[1]
+        rows = insert_lines.await_args_list[0].args[1]
         self.assertEqual(rows[0]["canonical_sku_id"], "sku-oil")
         self.assertEqual(rows[0]["billed_qty"], 10)
         self.assertEqual(rows[0]["printed_qty"], 12)
         self.assertEqual(rows[0]["mandi_pulse_median"], "128.00")
-        self.assertEqual(insert_ims.await_args.args[1]["ims_status"], "PENDING")
+        self.assertEqual(insert_ims.await_args_list[0].args[1]["ims_status"], "PENDING")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 | `POST /api/demo/load-sample` | ✅ live — CIS §5 golden fixture verbatim, no DB writes, never broadcasts (B2) |
 | `GET /healthz` | ✅ operational probe (additive, documented as outside the CIS REST table) |
 | `WS /ws/counter` | ✅ live — broadcasts `SCAN_STARTED` then `AUDIT_COMPLETE` for uploaded scans to all connected counters |
-| `/static/*` | ✅ live — serves `backend/static/`; fixture crop is present, absent WAV intentionally returns 404 |
+| `/static/*` | ✅ live — serves `backend/static/`; fixture crop is present, fixture WAV is absent, generated scan WAVs are served |
 | `/api/parcha/{id}/validate`, `/alerts`, `/price-analysis` | ✅ live — Module 4 Decimal validation and invoice-history price analysis |
 | `/api/credit/*` GETs | ✅ live — read-only recommendations/schedule/alerts |
 | `/api/credit/*` POST writes | ⏸️ not mounted — keep ledger schema/kinds unchanged per user decision |
@@ -26,23 +26,26 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 
 - `app/main.py` — integrated FastAPI app; registers CIS + Module 4 read routes, logging, WS manager, static mount, and the live Gemini/audit services.
 - `contracts/contracts.py` — single shared Pydantic contract source; `app/contracts.py` is the backend host/Docker bridge. TS casing remains aligned with CIS.
-- `app/core/config.py` — env snapshot (`SUPABASE_*`, `PARCHA_DEMO_MERCHANT_ID`, `PARCHA_FIXTURE_PATH`, upload limits). Loads ROOT `.env` only.
+- `app/core/config.py` — env snapshot (`SUPABASE_*`, `PARCHA_DEMO_MERCHANT_ID`, `PARCHA_FIXTURE_PATH`, `SARVAM_API_KEY`, `PARCHA_TTS_LANGUAGE`, upload limits). Loads ROOT `.env` only.
 - `app/core/db.py` — shared async Supabase client (pre-existing) + NEW `reset_client()` (test-only loop-rebinding escape).
 - `app/core/money.py` — Decimal helpers: `q2` (2-dp HALF_UP), `dec` (float-safe via str), `as_float` (serialize to JSON number).
 - `app/core/repo.py` — Module 2 invoice/supplier/SKU reads and invoice/line/IMS/loan persistence; Module 4 query packages contain their own read adapters over the shared Supabase client.
 - `app/api/scan_router.py`, `resolve_router.py`, `export_router.py`, `demo_router.py`.
 - `app/api/ws_router.py` + `app/core/ws_manager.py` — app-scoped connection registry, broadcast envelope, disconnect cleanup.
-- `backend/static/crops/demo_pen_edit.jpg` — visibly labeled demo-only placeholder, not a Gemini crop. `backend/static/audio/demo_alert.wav` is intentionally absent so the frontend can offer transcript/TTS fallback.
+- `backend/static/crops/demo_pen_edit.jpg` — visibly labeled demo-only placeholder, not a Gemini crop. `backend/static/audio/demo_alert.wav` remains absent for the fixture path; live uploaded scans generate per-invoice WAVs when Sarvam is configured.
 - `app/services/pipeline.py` — `LiveParchaPipeline` plus `FixturePipeline` reserved for `load-sample` only.
 - `app/services/credit_rules.py` — transaction-backed CIS daily-credit cap with stored merchant-volume fallback.
 - `app/services/merchant_resolver.py` — B1 demo-merchant chain.
 - `app/services/exporters.py` — Tally XML + Marg CSV builders (Module 5 deliverable, gateway-exposed).
 - `app/services/gemini_vision.py`, `pillow_cropper.py` — Module 3 vision extraction and contextual crop.
+- `app/services/sarvam_tts.py` — Sarvam Bulbul v4 Flash WAV generation; optional-key/provider failure preserves browser speech fallback.
+- `backend/scripts/sarvam_tts_smoke.py` — one-off real API smoke script; output WAV is locally ignored.
 - `app/engine/` and `app/{bill_validation,price_analysis,credit}/` — Module 4 Decimal engines and read APIs.
 
 ## 3. Integration boundaries and remaining mock
 
-- **Live scan pipeline:** `LiveParchaPipeline` uses Gemini 2.5 Flash, Pillow, `math_engine`, `waterfall_engine`, `LiveCreditRules`, and Supabase persistence. It preserves extracted quantities; no demo-specific `12 → 10` rewrite. Exact supplier/SKU matches only; unmatched references are not fabricated.
+- **Live scan pipeline:** `LiveParchaPipeline` uses Gemini 2.5 Flash, Pillow, `math_engine`, `waterfall_engine`, `LiveCreditRules`, Sarvam Bulbul TTS, and Supabase persistence. It preserves extracted quantities; no demo-specific `12 → 10` rewrite. Exact supplier/SKU matches only; unmatched references are not fabricated.
+- **Voice alert:** `voice_transcript` is a concise deterministic three-sentence summary (supplier/invoice, flagged lines/reason/overcharge, payout/day-one split). Sarvam reads `SARVAM_API_KEY` and `PARCHA_TTS_LANGUAGE` from root `.env`; language defaults to `hi-IN`. Generated audio is served from `/static/audio/`. If the key/provider is unavailable, the existing transcript speech fallback remains. The synchronous API has a 5-second timeout and can extend end-to-end scan latency beyond the 3.5-second target.
 - **Amount rule:** accepted line totals use the invoice's billed rate with Gemini's accepted quantity; high rates are flagged but not auto-repriced. Overcharge is computed from positive line-level printed-vs-recomputed differences; the printed grand total is display-only and may contain freight.
 - **Credit rule:** the CIS seven-day flow uses 30-day successful incoming QR transactions, with `avg_daily_qr_volume` fallback; daily cap is 35% of average daily QR volume. Resolve rejects an amount over the seven-day cap.
 - **Remaining fixture:** `POST /api/demo/load-sample` intentionally returns the CIS golden fixture for the pitch fail-safe; it does not write DB rows or broadcast WS events.
@@ -62,13 +65,14 @@ scans use Gemini, Pillow, Decimal auditing, and Supabase persistence.
 - ✅ In-process (Starlette TestClient, host run): all endpoints + guards; real Supabase reads; one full resolve→rollback cycle proving exact write math (loan 4935.06/705.01/2676.80/4230.05, IMS upsert, status flip) with DB restored pristine (56 loans / 150 IMS / AUDITED).
 - ✅ Host TestClient verified two simultaneous WS clients each receive `SCAN_STARTED` → `AUDIT_COMPLETE`, exact narrow event shape vs wider REST response, reconnect/disconnect cleanup, and no extra event from sample-load, resolve, or invalid scan. Static crop returns `image/jpeg`; missing WAV, unknown path, and directory listing return 404.
 - ✅ Integrated host TestClient checked live Supabase read-only validation, price analysis, credit recommendation, and export; test-patched scan verified event order and REST/WS shape without calling Gemini or writing DB rows.
-- ✅ All 23 unit tests pass, including live-pipeline amount mapping, median benchmark, daily QR cap/fallback, and disabled weekly-credit POST routes.
+- ✅ All 26 unit tests pass, including mocked TTS WAV writing/failure fallback, live-pipeline TTS URL/transcript wiring, amount mapping, median benchmark, daily QR cap/fallback, and disabled weekly-credit POST routes.
+- ⏳ Live Sarvam smoke not completed: SDK installed locally, but the root `.env` has no key. Rotate the chat-exposed key and add its replacement to `.env`, then run `python scripts/sarvam_tts_smoke.py` from `backend/`.
 - ⏳ Deferred (Docker Desktop unavailable): `docker compose up --build` health check + browser-through-proxy smoke for `/ws` and `/static`. Existing Compose mounts persist crops/audio; backend also mounts `./contracts:/contracts:ro` for the fixture.
 - Live DB had one pre-existing non-seed loan + two related ledger rows before this slice's write-path check (57 loans / 177 ledger vs seed baseline 56 / 175). These were left untouched; temporary test resolve was rolled back and the demo invoice is AUDITED/ACCEPTED with no loan.
 
 ## 6. Remaining verification / future decisions
 
-1. **Docker verification:** once Docker Desktop works, build/test both services and verify `/api`, `/ws`, and `/static` through the Angular 4200 proxy.
+1. **Docker verification:** once Docker Desktop works, rebuild/test both services (the API image now needs `sarvamai`) and verify `/api`, `/ws`, and `/static` through the Angular 4200 proxy.
 2. **Gemini end-to-end scan:** not run during merge checks (would call external Gemini and persist an invoice); test later with an approved bill/API key and clean up only the generated test rows.
 3. **Resolve Event 3 / weekly-credit writes:** remain disabled until coordinating with Dev 1 and approving any needed ledger contract change.
 

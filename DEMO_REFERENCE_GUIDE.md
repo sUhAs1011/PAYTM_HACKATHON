@@ -62,7 +62,7 @@ This reference guide contains everything needed to configure, run, and demonstra
                                                 • 7-Day QR Split Schedule
 ```
 
-**Current integration notes:** uploaded scans use Gemini 2.5 Flash, Pillow, Decimal auditing, and Supabase persistence. Sarvam audio synthesis is not implemented in these branches; the fixture WAV is intentionally absent, so use the Soundbox transcript speech fallback. `load-sample` and resolve are REST-only; resolve does not emit `PAYOUT_APPROVED` because the frontend also applies the REST response. The UPI Autopay badge is a stored/demo state, not a live mandate registration.
+**Current integration notes:** uploaded scans use Gemini 2.5 Flash, Pillow, Decimal auditing, Supabase persistence, and (when `SARVAM_API_KEY` is configured) Sarvam Bulbul v4 Flash TTS. `PARCHA_TTS_LANGUAGE` defaults to `hi-IN`; generated audio is returned through `/static/audio/`. Missing key/provider failure keeps the transcript speech fallback. The current local `.env` has no key yet, so Sarvam playback is pending a rotated key and live smoke check. TTS has a 5-second request timeout and can extend scan response time. `load-sample` remains fixture-verbatim and resolve are REST-only; resolve does not emit `PAYOUT_APPROVED` because the frontend also applies the REST response. The UPI Autopay badge is a stored/demo state, not a live mandate registration.
 
 ### Flow Details
 1. **State 1: IDLE**
@@ -75,7 +75,7 @@ This reference guide contains everything needed to configure, run, and demonstra
    * Laptop Soundbox screen immediately animates with a laser-sweep: `"Auditing Parcha... Gemini 2.5 Flash / Decimal audit / Mandi-Pulse"`.
 3. **State 3: AUDIT ALERT**
    * Realtime WebSocket pushes `{"event": "AUDIT_COMPLETE"}`.
-    * **Voice Alert:** Soundbox speaks the returned transcript. Live Sarvam audio is not generated; if the audio URL is absent, use the tap-to-speak browser fallback.
+    * **Voice Alert:** Once a rotated `SARVAM_API_KEY` is set in root `.env`, the Soundbox plays generated Hindi WAV audio. Without a valid key or when the provider fails, use the tap-to-speak browser transcript fallback.
    * **Front Screen:** Shows red overcharge warning `⚠ Overcharge ₹140 · Pay ₹13,860`.
    * **Audit Table:** Shows red row for Fortune Oil (rate hike + pen edit from 12 to 10), yellow row for Parle-G (76% OCR confidence review), Mandi-Pulse benchmark badge, and pen strikethrough crop.
 4. **State 4: RESOLVED & FINANCED**
